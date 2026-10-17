@@ -3,6 +3,7 @@
 // so it can be tested in Node.
 
 import { defaultOwner } from './owner.js';
+import { addHearts, heartsFromTrust } from './bond.js';
 
 export const SAVE_VERSION = 1;
 
@@ -99,7 +100,7 @@ export function createPet({ name, species, look, traits, owner }, now = Date.now
     // Which backdrop is home: 'room' or the id of one of the owner's photos.
     home: 'room',
     needs: { fullness: 70, energy: 80, fun: 55, affection: 50 },
-    bond: 5,
+    bond: 0, // trust, 0..100, follows the hearts in memory.hearts
     bowlGrams: 0,
     memory: {
       // How often things happen at each hour of the day, decayed over time.
@@ -111,6 +112,9 @@ export function createPet({ name, species, look, traits, owner }, now = Date.now
       // How much the owner does each thing; shapes the pet's tastes.
       habits: { fetch: 0, petting: 0, walks: 0, treats: 0, talk: 0 },
       milestones: {},
+      hearts: { total: 0, day: '', today: {}, partial: {} },
+      finds: {}, // id -> { count, first, place }
+      lastGiftDay: '',
       treatsToday: { day: '', count: 0 },
       stats: { meals: 0, grams: 0, fetches: 0, walkMeters: 0, walks: 0 },
       journal: [],
@@ -145,10 +149,6 @@ export function tickNeeds(pet, dt, exertion = 'rest') {
 
 export function addNeeds(pet, delta) {
   for (const [k, v] of Object.entries(delta)) pet.needs[k] = clamp(pet.needs[k] + v);
-}
-
-export function addBond(pet, amount) {
-  pet.bond = clamp(pet.bond + amount);
 }
 
 export function mood(pet, asleep = false) {
@@ -207,7 +207,8 @@ export function catchUp(pet, now = Date.now()) {
       n.fullness = clamp(n.fullness + (grams / portionGrams(pet)) * 55);
     }
   }
-  if (secs > 86400) addBond(pet, -2 * (secs / 86400));
+  // Long absences cost a little trust.
+  if (secs > 86400) addHearts(pet, -secs / 86400);
 
   const hours = secs / 3600;
   const duration = hours < 1 ? `${Math.round(secs / 60)} minutes`
@@ -244,6 +245,8 @@ export function deserialize(json) {
       words: { ...fresh.memory.words, ...data.memory?.words },
       habits: { ...fresh.memory.habits, ...data.memory?.habits },
       stats: { ...fresh.memory.stats, ...data.memory?.stats },
+      hearts: data.memory?.hearts ?? { ...fresh.memory.hearts, total: heartsFromTrust(data.bond ?? 0) },
+      finds: data.memory?.finds ?? {},
     },
   };
 }

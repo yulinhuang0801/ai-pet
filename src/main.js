@@ -4,9 +4,11 @@
 import {
   COAT_COLORS, EYE_COLORS, COLLAR_COLORS, PATTERNS, SIZES, TRAITS, NEEDS,
   createPet, defaultLook, defaultTraits, catchUp, serialize, deserialize,
-  bondLabel, ageLabel, portionGrams,
+  ageLabel, portionGrams,
 } from './pet.js';
-import { TRICKS, WORDS, expects, formatHour, favouriteActivity } from './learning.js';
+import { TRICKS, WORDS, expects, formatHour, favouriteActivity, canLearn } from './learning.js';
+import { level, HEART_SOURCES, DAILY_CAP, heartsToday, unlocked, unlockLevel, today } from './bond.js';
+import { FINDS, drawFind } from './finds.js';
 import { World, VIEW_W, VIEW_H, UNITS_PER_METER, petScale } from './world.js';
 import { render } from './renderer.js';
 import { SKIN_TONES, HAIR_COLORS, HAIR_STYLES, TOP_COLORS, BOTTOM_COLORS, defaultOwner } from './owner.js';
@@ -49,6 +51,7 @@ let preview = null; // the creator preview
 let draft = null; // pet being created or edited
 let editing = false;
 let places = []; // { id, name, blob, image }
+let treatImage = null; // the owner's own treat picture, if any
 
 // --- Canvas sizing ---
 
@@ -254,7 +257,7 @@ function startGame(pet, away) {
   if (away) {
     world.greet();
     toast(away.text);
-  }
+  } else world.maybeGift();
   showHome();
 }
 
@@ -301,7 +304,7 @@ function releaseVelocity() {
   return { vx: (b.x - a.x) / dt, vy: (b.y - a.y) / dt };
 }
 
-const CURSORS = { pet: 'grab', ball: 'grab', bag: 'grab', jar: 'grab', floor: 'pointer', ground: 'pointer', wall: 'default' };
+const CURSORS = { pet: 'grab', ball: 'grab', bag: 'grab', jar: 'grab', owner: 'pointer', floor: 'pointer', ground: 'pointer', wall: 'default' };
 
 scene.addEventListener('pointerdown', (e) => {
   if (!world) return;
@@ -320,6 +323,10 @@ scene.addEventListener('pointerdown', (e) => {
     pointer.mode = 'drag';
   } else if (hit === 'jar' && world.grab('treat', p.x, p.y)) {
     pointer.mode = 'drag';
+  } else if (hit === 'owner') {
+    pointer.mode = null;
+    editYou();
+    return;
   } else if (world.scene === 'park') {
     pointer.mode = 'walk';
     world.setWalkInput(p.x >= world.owner.x ? 1 : -1);
@@ -697,8 +704,32 @@ function renderPanel() {
   $('mood').textContent = m.label;
   $('mood').dataset.mood = m.id;
   $('pet-meta').textContent = `${pet.species === 'cat' ? 'Cat' : 'Dog'} · ${ageLabel(pet)}`;
-  $('bond-label').textContent = bondLabel(pet.bond);
-  $('bond-bar').style.width = `${Math.max(2, pet.bond)}%`;
+  const lv = level(pet);
+  const total = Math.floor(pet.memory.hearts.total);
+  $('bond-label').textContent = lv.name;
+  $('bond-hearts').textContent = `${total} ♥`;
+  $('bond-bar').style.width = `${Math.max(2, lv.progress * 100)}%`;
+  $('bond-next').textContent = lv.next
+    ? `${Math.ceil(lv.next.hearts - pet.memory.hearts.total)} more ♥ to ${lv.next.name}: ${pet.name} ${lv.next.unlock.text}.`
+    : `${pet.name} couldn't be closer to you.`;
+
+  const todayCount = heartsToday(pet);
+  $('today-count').textContent = `${todayCount} / ${DAILY_CAP} ♥`;
+  $('today').innerHTML = Object.entries(HEART_SOURCES).map(([id, src]) => {
+    const got = pet.memory.hearts.day === today() ? pet.memory.hearts.today[id] ?? 0 : 0;
+    const done = got >= src.cap || todayCount >= DAILY_CAP;
+    const icons = '♥'.repeat(got) + '♡'.repeat(src.cap - got);
+    return `<li data-done="${done}"><span>${src.label}</span><span class="hearts" aria-label="${got} of ${src.cap} hearts">${icons}</span><span class="meta">${done ? 'Done for today' : src.hint}</span></li>`;
+  }).join('');
+
+  const leash = $('walk-leash');
+  const onWalk = world.scene === 'park';
+  leash.hidden = !(onWalk && unlocked(pet, 'offLeash'));
+  if (onWalk) {
+    leash.setAttribute('aria-pressed', String(!world.walk.offLeash));
+    leash.textContent = world.walk.offLeash ? 'Leash off' : 'Leash on';
+  }
+  renderFinds();
   $('act-call').textContent = `Call ${pet.name}`;
   const walking = world.scene === 'park';
   $('home-actions').hidden = walking;
@@ -721,7 +752,9 @@ function renderPanel() {
 
   $('tricks').innerHTML = Object.entries(TRICKS).map(([id, t]) => {
     const v = pet.memory.tricks[id] * 100;
-    const state = v >= 65 ? 'Knows it' : v >= 30 ? 'Learning' : v > 6 ? 'Getting the idea' : 'Not yet';
+    const locked = !canLearn(pet, id);
+    const state = locked ? `Unlocks at ${unlockLevel(t.unlock).name}`
+      : v >= 65 ? 'Knows it' : v >= 30 ? 'Learning' : v > 6 ? 'Getting the idea' : 'Not yet';
     return `<li class="skill"><div class="need-row"><span>${t.label}</span><span>${state}</span></div>${bar('fun', Math.max(2, v))}</li>`;
   }).join('');
 
@@ -763,6 +796,90 @@ function renderPanel() {
 }
 
 $('edit-pet').addEventListener('click', () => openCreator(world.pet));
+$('edit-you').addEventListener('click', () => editYou());
+
+// Open the editor straight at the owner's own look.
+function editYou() {
+  openCreator(world.pet);
+  const you = document.querySelector('.field.you');
+  you.scrollIntoView({ block: 'start' });
+  you.querySelector('button')?.focus({ preventScroll: true });
+}
+
+$('walk-leash').addEventListener('click', () => {
+  if (world?.setOffLeash(!world.walk.offLeash)) renderPanel();
+});
+
+// --- Finds ---
+
+let findsKey = '';
+function renderFinds() {
+  const pet = world.pet;
+  const c = pet.memory.finds;
+  const key = JSON.stringify(c);
+  if (key === findsKey) return;
+  findsKey = key;
+  const found = FINDS.filter((f) => c[f.id]).length;
+  $('finds-count').textContent = `${found} of ${FINDS.length}`;
+  $('finds').replaceChildren(...FINDS.map((f) => {
+    const li = document.createElement('li');
+    li.className = 'find';
+    const have = c[f.id];
+    li.dataset.found = String(Boolean(have));
+    const canvas = document.createElement('canvas');
+    canvas.width = 80;
+    canvas.height = 80;
+    const ctx = canvas.getContext('2d');
+    drawFind(ctx, f.id, 40, 40, 2.6);
+    li.append(canvas);
+    const name = document.createElement('span');
+    name.textContent = have ? f.name : '?';
+    li.append(name);
+    if (have) {
+      const count = document.createElement('span');
+      count.className = 'count';
+      count.textContent = `×${have.count}`;
+      li.title = `First found: ${have.place}, ${new Date(have.first).toLocaleDateString()}`;
+      li.append(count);
+    }
+    return li;
+  }));
+}
+
+// --- Custom treat picture ---
+
+async function loadAssets() {
+  const rows = await media.all('assets');
+  const treat = rows.find((r) => r.id === 'treat');
+  treatImage = treat ? await blobToImage(treat.blob).catch(() => null) : null;
+  renderTreat();
+}
+
+function renderTreat() {
+  $('treat-meta').textContent = treatImage ? 'Your own picture' : 'Bone biscuits';
+  $('treat-reset').hidden = !treatImage;
+}
+
+$('treat-file').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const blob = await photoToBlob(file, 256, 256, 'image/png');
+    await media.put('assets', { id: 'treat', blob });
+    treatImage = await blobToImage(blob);
+    renderTreat();
+    toast('Treats now look like your picture. Take one from the jar to see it.');
+  } catch (err) {
+    toast(err.message || 'That picture could not be used.');
+  }
+});
+
+$('treat-reset').addEventListener('click', async () => {
+  await media.remove('assets', 'treat');
+  treatImage = null;
+  renderTreat();
+});
 $('reset').addEventListener('click', () => {
   $('reset-text').textContent = `This says goodbye to ${world.pet.name} and everything they've learned. Your photos and recordings stay. It can't be undone.`;
   $('reset-confirm').hidden = false;
@@ -800,7 +917,7 @@ function frame(now) {
       left -= step;
     }
     const ctx = fitCanvas(scene);
-    if (ctx) render(ctx, world, { date, backdrops: backdrops(world) });
+    if (ctx) render(ctx, world, { date, backdrops: backdrops(world), images: { treat: treatImage } });
     $('status').textContent = world.status();
     panelTimer += dt;
     saveTimer += dt;
@@ -830,4 +947,5 @@ const saved = storage.load();
 if (saved) startGame(saved, catchUp(saved));
 else openCreator();
 loadPlaces();
+loadAssets();
 requestAnimationFrame(frame);

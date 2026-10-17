@@ -49,12 +49,35 @@ Pasting any photo behind the pet works for a street shot, but not for a photo of
 - **Web app (current)**: fastest to iterate, and works on phones.
 - Real-step walks (pedometer or GPS) and camera AR work far better in a mobile app. Revisit once the core feels right.
 
+## Decisions so far
+
+- **Freedom over correctness.** Uploads are never refused or judged. A photo of a student ID card is a perfectly good place to walk a dog if that amuses you. Odd ways to play are a feature.
+- **Customise everything, one piece at a time**: treats (done), your look (done), then your home, then your pet from a photo.
+- **Free, open-source understanding.** Run a small model in the browser with transformers.js to map what you say to the pet's reaction. No server or API bill. Its job is small (pick a reaction, not hold a conversation), so a small model is enough.
+- **Socialising is opt-in.** Shared walks are off by default. When on, another walker appears only where your routes cross. Never show a live exact position or where someone lives. Start with friends-only, and add block and report before opening it to strangers. This needs a server (realtime presence), so it comes after map walks.
+
+## Animation and asset libraries
+
+Drawing everything by hand doesn't scale to “customise everything”. Options:
+
+| Need | Library or source | Licence | Notes |
+| --- | --- | --- | --- |
+| Effects, emotes, little reactions (hearts, confetti, sparkles, emoji-style faces) | Lottie files with `lottie-web` | LottieFiles says free animations use the Lottie Simple License (commercial use OK); check each file | Drops straight into our 2D scene. |
+| Furniture, props, nature for home design | Kenney asset packs (furniture kit, nature) | CC0 | 2D renders and 3D models. |
+| Animated dogs and cats | Quaternius low-poly animal packs (dog, cat, wolf…) | CC0 | 3D (FBX or Blend; may need converting to GLB). Animation sets are small (idle, walk, run). |
+| Animated people for the owner | Quaternius character packs, Mixamo animations | CC0 / free with an Adobe account | 3D. |
+| Engine | three.js (3D) or PixiJS (2D) | MIT | |
+
+The real choice is **stay 2D or move to 3D**:
+- **2D (current) plus Lottie and Kenney sprites**: keeps everything we've built and the colour customisation, and adds library effects and props. Decorating a home is limited to the side view.
+- **3D with three.js and CC0 models**: library models come with animations; a room can be decorated from any angle; realistic and cartoon pets are just different models. But it's a rewrite of the drawing layer, and free animated dogs and cats are low-poly with few animations, so the realistic look would need paid models.
+
 ## Build order
 
-1. **Polish the core**: fix bugs; add bond levels with unlocks; give each day something to come back for, like a gift found on a walk or a visitor.
+1. **Polish the core**: bond hearts and levels with unlocks, finds on walks, daily gifts, custom treat picture. *(Done.)*
 2. **Map walks**: pick a place on a real map, draw a route, and walk a scene generated from what is actually there, with discoveries along the way.
-3. **Understanding you**: a small server that uses an LLM to choose the pet's reaction.
-4. **Smart photo places**: a vision model checks each uploaded photo and styles the scene from it.
+3. **Understanding you**: a small open-source model in the browser chooses the pet's reaction. Free, no server.
+4. **Walk together**: opt-in shared walks where routes cross.
 5. **Going mobile**: real steps count as walks, maybe a camera view.
 
 ## Sources

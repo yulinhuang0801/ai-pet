@@ -335,6 +335,25 @@ label.small.file-button {
 .voice-row .meta { font-weight: 400; }
 
 .sublabel { font-size: 0.82rem; color: var(--muted); }
+
+.bond-row strong { font-weight: 700; }
+#bond-hearts, .today-count { color: var(--affection); font-weight: 700; font-variant-numeric: tabular-nums; }
+.today { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.today li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 10px; font-size: 0.9rem; }
+.today .hearts { color: var(--affection); letter-spacing: 0.1em; }
+.today .meta { grid-column: 1 / -1; font-size: 0.8rem; }
+.today li[data-done="true"] > span:first-child { color: var(--muted); }
+
+.finds { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 8px; }
+.find { display: grid; justify-items: center; gap: 2px; text-align: center; font-size: 0.75rem; padding: 6px 4px; border-radius: 10px; background: var(--surface-2); }
+.find canvas { width: 40px; height: 40px; }
+.find[data-found="false"] { color: var(--muted); }
+.find[data-found="false"] canvas { opacity: 0.25; filter: grayscale(1) brightness(0.3); }
+.find .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.custom-row { display: grid; gap: 6px; }
+.custom-row > div:first-child { display: grid; font-weight: 600; font-size: 0.92rem; }
+.custom-row .meta { font-weight: 400; }
 .field.you { gap: 12px; }
 
 .talk { display: flex; gap: 8px; }

@@ -7,6 +7,8 @@ import {
   VIEW_W, VIEW_H, GROUND, BOWL_X, BED_X, BAG_X, JAR_X, BALL_R, LEASH,
 } from './world.js';
 import { portionGrams } from './pet.js';
+import { drawFind } from './finds.js';
+import { unlocked } from './bond.js';
 
 // 0 = full day, 1 = full night, from the local clock.
 export function darkness(date) {
@@ -459,6 +461,30 @@ function drawPhoto(ctx, img, cam = 0, scrolls = false) {
   ctx.fillRect(0, 300, VIEW_W, VIEW_H - 300);
 }
 
+// An owner-supplied picture used as an object, fitted into a square.
+function drawImageItem(ctx, img, x, y, size) {
+  const k = size / Math.max(img.width, img.height);
+  ctx.drawImage(img, x - (img.width * k) / 2, y - (img.height * k) / 2, img.width * k, img.height * k);
+}
+
+// Something waiting to be found on a walk: a glint on the path.
+function drawSparkleFind(ctx, find, time) {
+  const y = GROUND - 8;
+  drawFind(ctx, find.item.id, find.x, y, 0.9);
+  const a = 0.5 + 0.5 * Math.sin(time * 5);
+  ctx.strokeStyle = `rgba(255, 245, 190, ${0.4 + a * 0.6})`;
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  const r = 6 + a * 4;
+  for (let i = 0; i < 4; i++) {
+    const ang = (i * Math.PI) / 2 + time;
+    ctx.beginPath();
+    ctx.moveTo(find.x + Math.cos(ang) * r, y - 14 + Math.sin(ang) * r);
+    ctx.lineTo(find.x + Math.cos(ang) * (r + 5), y - 14 + Math.sin(ang) * (r + 5));
+    ctx.stroke();
+  }
+}
+
 function collarPoint(world) {
   const head = world.headPoint();
   const s = world.scale;
@@ -493,7 +519,7 @@ function drawNight(ctx, world, dark) {
   }
 }
 
-export function render(ctx, world, { date = new Date(), time = world.time, backdrops = {} } = {}) {
+export function render(ctx, world, { date = new Date(), time = world.time, backdrops = {}, images = {} } = {}) {
   const dark = darkness(date);
   const home = world.scene === 'home';
   const photo = home ? backdrops.home : backdrops.walk;
@@ -513,13 +539,17 @@ export function render(ctx, world, { date = new Date(), time = world.time, backd
     ctx.fill();
     drawBall(ctx, ball.x, ball.y, BALL_R, ball.spin);
   }
-  if (world.floorTreat) drawBone(ctx, world.floorTreat.x, world.floorTreat.y, 1.2, 0.2);
+  const treat = (x, y, size, angle) => (images.treat ? drawImageItem(ctx, images.treat, x, y, size * 16) : drawBone(ctx, x, y, size, angle));
+  if (world.floorTreat) treat(world.floorTreat.x, world.floorTreat.y, 1.2, 0.2);
+  if (world.walk?.find) drawSparkleFind(ctx, world.walk.find, time);
+  if (home && world.shownGift) drawFind(ctx, world.shownGift.id, world.shownGift.x, GROUND - 8, 1.2);
   if (world.walk?.critter) drawCritter(ctx, world.walk.critter, world.walk.critter.x, time);
 
   // The owner stands behind the pet. On walks the leash hand reaches toward the pet.
   const o = world.owner;
   let hand = o.hand;
-  if (!home && !hand) {
+  const leashed = !home && !world.walk.offLeash;
+  if (leashed && !hand) {
     const toward = Math.sign(world.body.x - o.x) || o.dir;
     const pull = world.walk.tension;
     hand = { x: o.x + toward * (34 + pull * 24), y: GROUND - 150 + pull * 20 };
@@ -533,13 +563,14 @@ export function render(ctx, world, { date = new Date(), time = world.time, backd
     x: b.x, y: GROUND - b.jump, jump: b.jump, scale: world.scale, dir: b.dir, pose: b.pose,
     gait: b.gait, speed: b.speed, wagPhase: b.wagPhase, time,
     holdingBall: ball.state === 'mouth',
+    goldTag: unlocked(world.pet, 'goldTag'),
   });
-  if (!home) drawLeash(ctx, world, handPos);
+  if (leashed) drawLeash(ctx, world, handPos);
 
   // Whatever is in the owner's hand.
   const d = world.drag;
   if (d?.item === 'scoop') drawScoop(ctx, d.x, d.y);
-  if (d?.item === 'treat') drawBone(ctx, d.x, d.y, 1.7, -0.3);
+  if (d?.item === 'treat') treat(d.x, d.y, 1.7, -0.3);
   if (home && (ball.state === 'air' || ball.state === 'drag')) drawBall(ctx, ball.x, ball.y, BALL_R, ball.spin);
 
   drawParticles(ctx, world);

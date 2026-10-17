@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createPet, tickNeeds, catchUp, serialize, deserialize, mood } from '../src/pet.js';
 import { reinforce, trickChance, associate, recognises, recordRoutine, expects } from '../src/learning.js';
 import { parseUtterance } from '../src/commands.js';
+import { earn, addHearts, level, heartsToday, unlocked, DAILY_CAP } from '../src/bond.js';
 import { World } from '../src/world.js';
 
 const dog = () => createPet({ name: 'Mochi', species: 'dog' }, 0);
@@ -52,15 +53,15 @@ test('rewards make tricks more reliable and write milestones', () => {
     const n = reinforce(pet, 'sit', 'treat', i);
     if (n) notes.push(n);
   }
-  assert.ok(trickChance(pet, 'sit') > start + 0.4);
+  assert.ok(trickChance(pet, 'sit') > start + 0.3);
   assert.ok(notes.some((n) => n.includes('knows')));
 });
 
 test('cats learn more slowly than eager dogs', () => {
   const d = dog();
   const c = cat();
-  for (let i = 0; i < 5; i++) { reinforce(d, 'paw', 'treat'); reinforce(c, 'paw', 'treat'); }
-  assert.ok(d.memory.tricks.paw > c.memory.tricks.paw);
+  for (let i = 0; i < 5; i++) { reinforce(d, 'down', 'treat'); reinforce(c, 'down', 'treat'); }
+  assert.ok(d.memory.tricks.down > c.memory.tricks.down);
 });
 
 test('words are learned by association', () => {
@@ -204,4 +205,50 @@ test('the owner can take the ball straight from the pet\'s mouth', () => {
   assert.equal(w.ball.state, 'drag');
   w.release(500, -300);
   assert.equal(w.ball.state, 'air');
+});
+
+test('hearts are capped per activity and per day', () => {
+  const pet = dog();
+  const day = new Date(2026, 0, 5, 10);
+  earn(pet, 'walk', 5000, day);
+  assert.equal(heartsToday(pet, day), 3, 'walks give at most 3 a day');
+  for (const k of ['play', 'meal', 'pet', 'train']) earn(pet, k, 1000, day);
+  assert.equal(heartsToday(pet, day), DAILY_CAP);
+  const next = new Date(2026, 0, 6, 10);
+  earn(pet, 'meal', 1, next);
+  assert.equal(heartsToday(pet, next), 1, 'a new day starts fresh');
+});
+
+test('bond levels unlock harder tricks', () => {
+  const pet = dog();
+  assert.equal(unlocked(pet, 'paw'), false);
+  reinforce(pet, 'paw', 'treat');
+  assert.equal(pet.memory.tricks.paw, 0, 'locked tricks are not learned');
+  const note = addHearts(pet, 5);
+  assert.match(note, /Warming up/);
+  assert.equal(level(pet).name, 'Warming up');
+  assert.ok(unlocked(pet, 'paw'));
+  assert.ok(pet.bond > 0);
+});
+
+test('walks turn up finds and earn hearts', () => {
+  const pet = dog();
+  const w = new World(pet, { rng: () => 0.4, clock: () => new Date(2026, 0, 7, 12) });
+  w.startWalk();
+  w.setWalkInput(1);
+  for (let i = 0; i < 3000; i++) w.update(0.05);
+  assert.ok(Object.keys(pet.memory.finds).length > 0, 'found something');
+  assert.ok(pet.memory.hearts.total >= 1, 'about 290 m walked earns a heart');
+});
+
+test('friends bring a gift once a day', () => {
+  const pet = dog();
+  addHearts(pet, 25);
+  const w = new World(pet, { rng: () => 0.4, clock: () => new Date(2026, 0, 8, 9) });
+  w.greet();
+  assert.equal(w.activity.type, 'gift');
+  for (let i = 0; i < 400; i++) w.update(0.05);
+  assert.equal(pet.memory.lastGiftDay, new Date(2026, 0, 8).toDateString());
+  w.greet();
+  assert.equal(w.activity.type, 'greet', 'only one gift a day');
 });

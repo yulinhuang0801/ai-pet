@@ -1,14 +1,21 @@
 // How the pet learns from its owner: tricks through reward, words through
 // association, and daily routines through repetition.
 
-import { addJournal, addBond, clamp } from './pet.js';
+import { addJournal, clamp } from './pet.js';
+import { unlocked } from './bond.js';
 
 export const TRICKS = {
   sit: { label: 'Sit' },
   down: { label: 'Lie down' },
-  paw: { label: 'Shake paw' },
-  spin: { label: 'Spin' },
+  paw: { label: 'Shake paw', unlock: 'paw' },
+  spin: { label: 'Spin', unlock: 'spin' },
 };
+
+// Harder tricks need more trust before a pet will learn them.
+export function canLearn(pet, trick) {
+  const needs = TRICKS[trick].unlock;
+  return !needs || unlocked(pet, needs);
+}
 
 export const WORDS = {
   name: { label: 'Its name' },
@@ -33,6 +40,7 @@ function milestone(pet, key, text, now) {
 
 // Chance the pet does a trick when asked.
 export function trickChance(pet, trick) {
+  if (!canLearn(pet, trick)) return 0;
   const skill = pet.memory.tricks[trick] ?? 0;
   const t = pet.traits;
   const n = pet.needs;
@@ -48,11 +56,11 @@ export function trickChance(pet, trick) {
 // A reward shortly after the pet did a trick (on cue or by itself).
 // kind: 'treat' | 'praise'
 export function reinforce(pet, trick, kind, now = Date.now()) {
+  if (!canLearn(pet, trick)) return null;
   const tricks = pet.memory.tricks;
   const before = tricks[trick] ?? 0;
   const rate = (kind === 'treat' ? 0.11 : 0.05) * (1 - pet.traits.stubborn * 0.4) * (pet.species === 'cat' ? 0.8 : 1);
   tricks[trick] = clamp(before + rate * (1 - before), 0, 1);
-  addBond(pet, kind === 'treat' ? 0.6 : 0.4);
   const label = TRICKS[trick].label.toLowerCase();
   for (const [threshold, text] of SKILL_STEPS) {
     if (before < threshold && tricks[trick] >= threshold) {
@@ -124,15 +132,4 @@ export function favouriteActivity(pet) {
   const options = [['fetch', 'playing catch'], ['petting', 'being petted'], ['walks', 'going for walks']];
   const [id, label] = options.reduce((best, o) => ((h[o[0]] ?? 0) > (h[best[0]] ?? 0) ? o : best));
   return (h[id] ?? 0) >= 5 ? { id, label } : null;
-}
-
-export function bondMilestone(pet, now = Date.now()) {
-  const steps = [[15, 'is warming up to you'], [35, 'thinks of you as a friend'], [60, 'is your best friend'], [85, 'goes everywhere you go']];
-  for (const [level, text] of steps) {
-    if (pet.bond >= level) {
-      const note = milestone(pet, `bond:${level}`, `${pet.name} ${text}.`, now);
-      if (note) return note;
-    }
-  }
-  return null;
 }

@@ -3,12 +3,14 @@
 // is plain data that the renderer draws each frame.
 
 import {
-  tickNeeds, addNeeds, addBond, portionGrams, sizeScale, mood, addJournal,
+  tickNeeds, addNeeds, portionGrams, sizeScale, mood, addJournal,
 } from './pet.js';
 import {
   trickChance, reinforce, associate, recognises, recordRoutine, expects,
-  noteHabit, bondMilestone, TRICKS,
+  noteHabit, TRICKS,
 } from './learning.js';
+import { earn, addHearts, unlocked, today } from './bond.js';
+import { pickFind, collect, findById } from './finds.js';
 import { parseUtterance } from './commands.js';
 import { shoulderPoint, OWNER } from './owner.js';
 
@@ -54,6 +56,8 @@ export const VOICE_LINES = {
 
 // Pets are drawn a little larger than their real proportions so faces read well.
 export const petScale = (pet) => sizeScale(pet.look, pet.species) * 1.3;
+
+const article = (name) => `${/^[aeiou]/i.test(name) ? 'an' : 'a'} ${name.toLowerCase()}`;
 
 const isNight = (date) => date.getHours() >= 22 || date.getHours() < 6;
 const clampX = (x) => Math.min(MAX_X, Math.max(MIN_X, x));
@@ -126,10 +130,16 @@ const ACTS = {
 
   sleep: {
     label: (w) => `${w.pet.name} is fast asleep.`,
-    enter(w, a) { a.phase = w.scene === 'home' ? 'go' : 'settle'; a.settleAt = 0; w.setPose('stand'); },
+    enter(w, a) {
+      a.phase = w.scene === 'home' ? 'go' : 'settle';
+      a.settleAt = 0;
+      // Best friends sometimes curl up at your feet instead of in their bed.
+      a.atFeet = unlocked(w.pet, 'nap') && w.chance(0.5);
+      w.setPose('stand');
+    },
     tick(w, a) {
       if (a.phase === 'go') {
-        if (w.goTo(BED_X, 'walk')) a.phase = 'settle';
+        if (w.goTo(a.atFeet ? w.ownerSpot() : BED_X, 'walk')) a.phase = 'settle';
         return false;
       }
       w.stop();
@@ -306,7 +316,7 @@ const ACTS = {
           w.dropBall(30);
           w.setPose('sit', { wag: 1, ears: 0.9, mouth: 0.6 });
           addNeeds(w.pet, { fun: 8, affection: 2 });
-          addBond(w.pet, 0.3);
+          w.earn('play', 1);
           w.pet.memory.stats.fetches += 1;
           noteHabit(w.pet, 'fetch');
           w.vocal('happy', 1.2);
@@ -344,7 +354,7 @@ const ACTS = {
         // Stroking feels better than a hand resting still.
         const stroke = Math.min(1, w.petting.stroke / 300);
         addNeeds(p, { affection: (1.6 + stroke * 3.2) * dt, fun: 0.3 * dt });
-        addBond(p, (0.015 + stroke * 0.02) * dt);
+        w.earn('pet', dt * (0.6 + stroke * 0.8));
         if (a.t - (a.lastHeart ?? -1) > 0.9 - stroke * 0.5) { a.lastHeart = a.t; w.emit('heart', 1); }
         if (a.t > a.limit) {
           w.stopPetting();
@@ -494,6 +504,25 @@ const ACTS = {
     },
   },
 
+  gift: {
+    label: (w) => `${w.pet.name} brought you something.`,
+    enter(w, a) { a.phase = 'go'; w.setPose('happy', { mouth: 0.2 }); },
+    tick(w, a) {
+      if (a.phase === 'go') {
+        if (w.goTo(w.ownerSpot(), 'trot')) {
+          a.phase = 'give';
+          a.from = a.t;
+          w.faceOwner();
+          w.setPose('sit', { wag: 1, ears: 0.9 });
+          w.giveGift(a.item);
+        }
+        return a.t > 12;
+      }
+      w.stop();
+      return a.t - a.from > 3;
+    },
+  },
+
   // --- Walks: the owner walks, the pet goes along on the leash ---
 
   leash: {
@@ -503,6 +532,7 @@ const ACTS = {
       sniff: `${w.pet.name} found a very good smell.`,
       squirrel: w.pet.species === 'dog' ? `${w.pet.name} spotted a squirrel!` : `${w.pet.name} is stalking a bird.`,
       flop: `${w.pet.name} flopped down and refuses to move.`,
+      found: `${w.pet.name} is sniffing out something.`,
       tired: `${w.pet.name} is tired. Time to head home?`,
     })[a.phase],
     enter(w, a) {
@@ -519,9 +549,10 @@ const ACTS = {
       const moving = o.walkInput !== 0;
       if (moving) {
         addNeeds(p, { fun: 0.12 * dt, affection: 0.04 * dt });
-        addBond(p, 0.004 * dt);
       }
       if (a.phase !== 'tired' && p.needs.energy < 12) w.setLeash(a, 'tired', 999);
+      const f = w.walk.find;
+      if (f && (a.phase === 'walk' || a.phase === 'wait') && Math.abs(f.x - w.body.x) < 240) w.setLeash(a, 'found');
       const ahead = moving ? o.walkInput : (w.body.x >= o.x ? 1 : -1);
       const tight = w.walk.tension > 0.85;
 
@@ -563,6 +594,17 @@ const ACTS = {
           if (a.t > a.until || !c) w.setLeash(a, 'walk');
           break;
         }
+        case 'found': {
+          if (!f) { w.setLeash(a, 'walk'); break; }
+          if (a.sniffFrom === undefined) {
+            const side = f.x >= w.body.x ? 1 : -1;
+            if (w.goTo(f.x - side * 80 * s, 'trot')) { a.sniffFrom = a.t; w.face(f.x); w.setPose('sniff'); }
+          } else {
+            w.stop();
+            if (a.t - a.sniffFrom > 1.4) { w.pickUpFind(); w.setLeash(a, 'walk'); }
+          }
+          break;
+        }
         case 'flop':
           w.stop();
           if (a.t > a.until) w.setLeash(a, w.chance(0.6) ? 'walk' : 'flop', w.rand(3, 6));
@@ -576,6 +618,7 @@ const ACTS = {
 };
 
 const LEASH_POSES = {
+  found: ['stand', { ears: 1, wag: 0.9, head: 0.35 }],
   walk: ['stand', { wag: 0.6, ears: 0.7, tailUp: 0.75 }],
   wait: ['sit', { wag: 0.4, ears: 0.8 }],
   sniff: ['sniff', {}],
@@ -615,6 +658,7 @@ export class World {
     this.reward = null;
     this.heard = {};
     this.walk = null;
+    this.shownGift = null; // a gift lying at the owner's feet
     this.activity = null;
     this.start('idle');
   }
@@ -717,6 +761,7 @@ export class World {
 
   setLeash(a, phase, secs = 0) {
     a.phase = phase;
+    a.sniffFrom = undefined;
     a.until = a.t + secs;
     a.next = a.t + this.rand(6, 12);
     const [pose, extra] = LEASH_POSES[phase];
@@ -842,6 +887,7 @@ export class World {
     if (this.reward && this.time <= this.reward.until) {
       const note = reinforce(this.pet, this.reward.trick, kind);
       if (note) this.onNote(note);
+      this.earn('train', 1);
       this.reward = null;
       return true;
     }
@@ -850,7 +896,11 @@ export class World {
 
   positive() {
     this.learnWord('name');
-    const note = bondMilestone(this.pet);
+  }
+
+  // Hearts for time spent together; announces a new bond level.
+  earn(kind, amount) {
+    const note = earn(this.pet, kind, amount, this.now());
     if (note) this.onNote(note);
   }
 
@@ -864,6 +914,7 @@ export class World {
     if (this.ballHit(x, y)) return 'ball';
     if (this.petHit(x, y)) return 'pet';
     if (this.scene !== 'home') return 'ground';
+    if (Math.abs(x - this.owner.x) < 30 && y > GROUND - 320 && y < GROUND - 40) return 'owner';
     if (y > 296) return 'floor';
     return 'wall';
   }
@@ -1030,7 +1081,7 @@ export class World {
   // Food went in the bowl: the moment a pet learns about.
   fed() {
     const p = this.pet;
-    addBond(p, 0.5);
+    this.earn('meal', 1);
     const note = recordRoutine(p, 'feed', this.now());
     if (note) this.onNote(note);
     this.learnWord('dinner');
@@ -1075,7 +1126,6 @@ export class World {
     tt.count += 1;
     const plenty = tt.count > 8;
     addNeeds(p, plenty ? { fullness: 1 } : { fullness: 3, affection: 4, fun: 1 });
-    if (!plenty) addBond(p, 0.3);
     noteHabit(p, 'treats');
     this.positive();
     if (plenty && tt.count === 9) this.onToast(`${p.name} has had plenty of treats today.`);
@@ -1137,7 +1187,7 @@ export class World {
     }
     if (u.scold) {
       addNeeds(p, { affection: -4 });
-      addBond(p, -0.3);
+      addHearts(p, -0.3);
       this.reward = null;
       if (!this.isAsleep()) this.start('sulk');
       return;
@@ -1184,7 +1234,10 @@ export class World {
     if (this.ball.state === 'mouth' || this.ball.state === 'air') { this.ball.state = 'ground'; this.ball.y = GROUND - BALL_R; }
     this.floorTreat = null;
     this.scene = 'park';
-    this.walk = { place, distance: 0, startedAt: this.time, critter: null, tension: 0 };
+    this.walk = {
+      place, distance: 0, startedAt: this.time, critter: null, tension: 0,
+      find: null, nextFindAt: this.rand(70, 140) * UNITS_PER_METER, offLeash: false,
+    };
     Object.assign(this.owner, { x: 260, dir: 1, vx: 0, targetX: null, walkInput: 0, hand: null });
     this.body.x = 350;
     this.body.vx = 0;
@@ -1217,7 +1270,52 @@ export class World {
     return { meters, minutes };
   }
 
-  greet() { this.start('greet'); }
+  greet() {
+    if (!this.maybeGift()) this.start('greet');
+  }
+
+  setOffLeash(on) {
+    if (!this.walk || !unlocked(this.pet, 'offLeash')) return false;
+    this.walk.offLeash = on;
+    return true;
+  }
+
+  pickUpFind() {
+    const w = this.walk;
+    const f = w.find;
+    if (!f) return;
+    w.find = null;
+    w.nextFindAt = w.distance + this.rand(120, 260) * UNITS_PER_METER;
+    const first = collect(this.pet, f.item.id, w.place.name ?? 'The park');
+    this.vocal('happy', 1);
+    const text = `${this.pet.name} found ${article(f.item.name)}!`;
+    if (first) {
+      addJournal(this.pet, `First find of its kind: ${f.item.name.toLowerCase()}, on a walk at ${w.place.name ?? 'the park'}.`);
+      this.onNote(text);
+    } else this.onToast(text);
+  }
+
+  // Once a day, a pet that counts you as a friend brings you something.
+  maybeGift() {
+    const p = this.pet;
+    if (this.scene !== 'home' || this.isAsleep() || !unlocked(p, 'spin')) return false;
+    if (p.memory.lastGiftDay === today(this.now())) return false;
+    const owned = Object.keys(p.memory.finds);
+    const item = owned.length && this.chance(0.6) ? findById(owned[Math.floor(this.rng() * owned.length)]) : pickFind(p.species, this.rng);
+    this.start('gift', { item });
+    return true;
+  }
+
+  giveGift(item) {
+    const p = this.pet;
+    p.memory.lastGiftDay = today(this.now());
+    collect(p, item.id, 'A gift');
+    this.shownGift = { id: item.id, x: this.mouthPoint().x, until: this.time + 8 };
+    this.vocal('greet', 1.4);
+    const text = `${p.name} brought you ${article(item.name)}.`;
+    if (this.milestone('gift', `${p.name} brought you a gift for the first time: ${item.name.toLowerCase()}.`)) this.onNote(text);
+    else this.onToast(text);
+  }
 
   // --- simulation step ---
 
@@ -1246,6 +1344,7 @@ export class World {
     if (this.bubble && this.time > this.bubble.until) this.bubble = null;
     if (this.owner.bubble && this.time > this.owner.bubble.until) this.owner.bubble = null;
     if (this.reward && this.time > this.reward.until) this.reward = null;
+    if (this.shownGift && this.time > this.shownGift.until) this.shownGift = null;
   }
 
   moveOwner(dt) {
@@ -1254,7 +1353,17 @@ export class World {
       const resisting = this.walk.tension > 0.8 && ['flop', 'sniff'].includes(this.activity.phase) && Math.sign(this.body.x - o.x) !== o.walkInput;
       o.vx = o.walkInput * OWNER_WALK_SPEED * (resisting ? 0.45 : 1);
       if (o.walkInput) o.dir = o.walkInput;
-      this.walk.distance += Math.abs(o.vx * dt);
+      const step = Math.abs(o.vx * dt);
+      this.walk.distance += step;
+      this.earn('walk', step / UNITS_PER_METER);
+      const w = this.walk;
+      if (!w.find && w.distance >= w.nextFindAt) {
+        w.find = { x: o.x + (o.walkInput || o.dir) * 360, item: pickFind(this.pet.species, this.rng) };
+      }
+      if (w.find && Math.abs(w.find.x - o.x) > 700) {
+        w.find = null;
+        w.nextFindAt = w.distance + this.rand(60, 120) * UNITS_PER_METER;
+      }
     } else if (o.targetX !== null) {
       const dx = o.targetX - o.x;
       if (Math.abs(dx) < 4) { o.targetX = null; o.vx = 0; } else {
@@ -1284,13 +1393,15 @@ export class World {
     const b = this.body;
     const d = b.x - o.x;
     const dist = Math.abs(d);
-    if (dist > LEASH) {
-      const excess = dist - LEASH;
-      const lunging = this.activity.phase === 'squirrel' && this.pet.species === 'dog';
+    // Off the leash, a well-bonded pet still stays within calling distance.
+    const limit = this.walk.offLeash ? LEASH * 1.6 : LEASH;
+    if (dist > limit) {
+      const excess = dist - limit;
+      const lunging = !this.walk.offLeash && this.activity.phase === 'squirrel' && this.pet.species === 'dog';
       if (lunging) o.x += Math.sign(d) * excess * 0.6;
-      b.x = o.x + Math.sign(d) * LEASH;
+      b.x = o.x + Math.sign(d) * limit;
     }
-    this.walk.tension = Math.min(1, Math.max(0, (Math.abs(b.x - o.x) - (LEASH - 40)) / 40));
+    this.walk.tension = this.walk.offLeash ? 0 : Math.min(1, Math.max(0, (Math.abs(b.x - o.x) - (LEASH - 40)) / 40));
     const c = this.walk.critter;
     if (c) {
       c.t += dt;

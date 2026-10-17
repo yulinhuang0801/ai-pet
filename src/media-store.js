@@ -1,12 +1,13 @@
-// Photos of the owner's places and the pet's custom voice clips, kept in
-// this browser's IndexedDB. Falls back to memory when storage is blocked.
+// Photos of the owner's places, the pet's custom voice clips and other
+// pictures the owner adds, kept in this browser's IndexedDB. Falls back to
+// memory when storage is blocked.
 
 const DB_NAME = 'ai-pet-media';
-const STORES = ['places', 'voices'];
+const STORES = ['places', 'voices', 'assets'];
 
 function openDb() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
+    const req = indexedDB.open(DB_NAME, 2);
     req.onupgradeneeded = () => {
       for (const name of STORES) if (!req.result.objectStoreNames.contains(name)) req.result.createObjectStore(name, { keyPath: 'id' });
     };
@@ -52,7 +53,7 @@ export class MediaStore {
 }
 
 // Shrink a photo to a size that keeps storage small and drawing fast.
-export async function photoToBlob(file, maxW = 1600, maxH = 900) {
+export async function photoToBlob(file, maxW = 1600, maxH = 900, type = 'image/jpeg') {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise((resolve, reject) => {
@@ -66,7 +67,7 @@ export async function photoToBlob(file, maxW = 1600, maxH = 900) {
     canvas.width = Math.round(img.naturalWidth * k);
     canvas.height = Math.round(img.naturalHeight * k);
     canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-    return await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+    return await new Promise((resolve) => canvas.toBlob(resolve, type, 0.85));
   } finally {
     URL.revokeObjectURL(url);
   }

@@ -13,7 +13,10 @@ Everything happens with your hands in the scene. You appear there as a character
 - **Play catch**: grab the ball and fling it. Throws follow real physics: gravity, bounces, walls and rolling. A keen dog play-bows while you hold the ball and may catch it mid-air. Cats mostly don't fetch.
 - **Pet**: press and hold on your pet. Stroking it feels better than a still hand. Cats have a limit and will tell you when you reach it.
 - **Walk**: pick a place, then hold on either side of yourself (or use the arrow keys) to walk. The leash sags and pulls tight. Your pet stops to sniff until you tug, lunges at squirrels and drags you along, and cats often flop down in protest.
-- **Your own places**: upload a photo of your street, park or living room. Walk your pet there, or make the photo your home backdrop.
+- **Your own places**: upload any photo, whether your street, your park or something sillier, and walk your pet there or make it your home backdrop. Nothing is refused: it's your space.
+- **Make it yours**: use your own picture as the treat, and change your look by clicking yourself in the scene.
+- **Bond hearts**: walks, play, meals, cuddles and training each earn a few hearts a day, up to 10. Hearts raise your bond level (Getting to know you, Warming up, Friends, Good friends, Best friends, Inseparable), and each level unlocks something: harder tricks, gifts, off-leash walks, naps at your feet, a golden tag.
+- **Finds and gifts**: on walks your pet sniffs out things to collect (11 kinds, some rare). Once you're friends, it brings you a gift each day.
 - **Your pet's voice**: your pet barks or meows out loud. Replace any sound with your own recording or an uploaded clip, like your real pet's bark.
 - **Talk to it**: type, or switch on “Talk out loud” where the browser supports speech, and call its name across the room. Try “sit”, “lie down”, “paw”, “spin”, “good girl!”, “no!”, “want a walk?”, “dinner?”
 
@@ -50,6 +53,8 @@ Keyboard shortcuts at home: F feeds, T gives a treat, B throws the ball, W start
 | --- | --- |
 | `src/pet.js` | Pet data: look, traits, needs, bond, saving, catching up after time away |
 | `src/learning.js` | Tricks, words, routines, habits, journal milestones |
+| `src/bond.js` | Hearts, daily caps, bond levels and unlocks |
+| `src/finds.js` | Things to find on walks, and their drawings |
 | `src/commands.js` | Turns what you type or say into name, cue, topic and tone |
 | `src/world.js` | The simulation: activities, decision making, the owner's hands, ball physics, pouring, lure training, leash walks |
 | `src/owner.js` | Your character: options and drawing, with arm and leg IK |
@@ -61,9 +66,10 @@ Keyboard shortcuts at home: F feeds, T gives a treat, B throws the ball, W start
 
 ## Roadmap
 
-- **Pick a place on a map**: search for a park or street and walk there, using map and street imagery.
+- **Pick a place on a map**: search for a park or street, draw a route, and walk a scene built from what is really there (OpenStreetMap).
+- **Walk together (opt-in)**: if your routes cross with another walker's, you can see each other on the map. Off by default.
 - **Build your space**: arrange and decorate your room and add props to your places, a small, focused take on world-building.
-- **Understands speech (Claude API)**: a small server function sends what you say, plus the pet's state, to Claude. Claude returns how this particular pet would react: tone, intent and which words it would pick up on. The API key stays on the server.
+- **Understands speech, for free**: a small open-source model running in the browser (transformers.js) matches what you say to how a pet would react. No server and no API costs.
 - **Photo-matched looks**: describe your pet or upload a photo, and Claude sets the coat, markings and build for you.
 - **Realistic art style**: an alternative renderer using the same behaviour system.
 - **Mischief mode**: chewed slippers, shedding and knocked-over cups, if you want them.

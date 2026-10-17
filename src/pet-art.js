@@ -230,7 +230,7 @@ export function drawPet(ctx, pet, s) {
   ctx.beginPath();
   ctx.ellipse(collar.x - 2, collar.y + 2, R * 0.38, R * 0.62, -0.5, 0.6, Math.PI * 1.3);
   ctx.stroke();
-  ctx.fillStyle = '#f1c94a';
+  ctx.fillStyle = s.goldTag ? '#f1c94a' : '#c9ced6';
   ellipse(ctx, collar.x + R * 0.1, collar.y + R * 0.62, 3.6, 3.6);
   ctx.fill();
 
