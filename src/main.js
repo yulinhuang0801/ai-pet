@@ -685,7 +685,7 @@ function contextHint() {
   if (w.drag?.item === 'scoop') return 'Hold the scoop over the bowl to pour. Let go when it looks like enough.';
   if (w.drag?.item === 'treat') return 'Hold the treat up high to lure a sit, or down on the floor to lure lying down. Let go at their mouth to hand it over.';
   if (w.drag?.item === 'ball') return 'Fling it: move fast and let go.';
-  if (w.ball.state === 'mouth') return `${w.pet.name} has the ball.`;
+  if (w.ball.state === 'mouth') return `${w.pet.name} has the ball. Press it to take it back.`;
   return 'Press the food bag for a scoop, the jar for a treat, or the ball to pick it up. Press and hold your pet to stroke them. Tap the floor to walk over.';
 }
 

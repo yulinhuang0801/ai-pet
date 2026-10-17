@@ -755,6 +755,9 @@ export class World {
   start(type, params = {}) {
     const prev = this.activity;
     if (prev) ACTS[prev.type].exit?.(this, prev);
+    // Only fetching and keeping the ball involve carrying it; anything else
+    // that interrupts means the pet lets go.
+    if (this.ball.state === 'mouth' && type !== 'fetchBack' && type !== 'keepBall') this.dropBall(20);
     const a = { type, t: 0, ...params };
     this.activity = a;
     ACTS[type].enter?.(this, a);
@@ -876,7 +879,12 @@ export class World {
 
   ballHit(x, y) {
     const ball = this.ball;
-    return this.scene === 'home' && ball.state === 'ground' && Math.hypot(x - ball.x, y - ball.y) < 30;
+    if (this.scene !== 'home') return false;
+    if (ball.state === 'mouth') {
+      const m = this.mouthPoint();
+      return Math.hypot(x - m.x, y - m.y) < 30 * this.scale;
+    }
+    return ball.state === 'ground' && Math.hypot(x - ball.x, y - ball.y) < 30;
   }
 
   shoulder() { return shoulderPoint(this.owner, GROUND); }
@@ -900,7 +908,12 @@ export class World {
   grab(item, x, y) {
     if (this.scene !== 'home' && item !== 'treat') return false;
     if (item === 'ball') {
-      if (this.ball.state !== 'ground') return false;
+      if (this.ball.state === 'mouth') {
+        // Taking the ball from the pet's mouth: it lets go and gets ready to chase.
+        this.ball.state = 'drag';
+        this.start('idle');
+      }
+      if (this.ball.state !== 'ground' && this.ball.state !== 'drag') return false;
       this.ball.state = 'drag';
       this.learnWord('ball');
       const p = this.pet;
@@ -983,7 +996,7 @@ export class World {
   // For the keyboard and tests: throw toward a spot on the floor.
   throwBall(targetX) {
     if (this.scene !== 'home') return this.onToast('Save the ball for the living room.');
-    if (this.ball.state === 'mouth') return this.onToast(`${this.pet.name} has the ball.`);
+    if (this.ball.state === 'mouth') this.start('idle'); // asks the pet to let go
     const o = this.owner;
     const tx = clampX(targetX ?? this.rand(MIN_X + 60, MAX_X - 60));
     const x0 = o.x + o.dir * 30;

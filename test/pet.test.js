@@ -183,3 +183,25 @@ test('on a walk the leash keeps the pet within reach', () => {
   assert.ok(r.meters > 20);
   assert.equal(w.scene, 'home');
 });
+
+test('the pet never keeps holding the ball once it is doing something else', () => {
+  const pet = dog();
+  const w = new World(pet, { rng: () => 0.3 });
+  w.ball.state = 'mouth';
+  w.start('fetchBack');
+  w.startPetting(w.body.x, 300);
+  assert.notEqual(w.ball.state, 'mouth');
+});
+
+test('the owner can take the ball straight from the pet\'s mouth', () => {
+  const pet = dog();
+  const w = new World(pet, { rng: () => 0.3 });
+  w.ball.state = 'mouth';
+  w.start('keepBall');
+  const m = w.mouthPoint();
+  assert.equal(w.hitTest(m.x, m.y), 'ball');
+  assert.ok(w.grab('ball', m.x, m.y));
+  assert.equal(w.ball.state, 'drag');
+  w.release(500, -300);
+  assert.equal(w.ball.state, 'air');
+});
