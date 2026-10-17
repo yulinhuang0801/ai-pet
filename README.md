@@ -2,9 +2,9 @@
 
 A virtual cat or dog that behaves like a real one. It gets hungry, tired and bored on a real clock, has its own personality, and learns from how you treat it. No fur on the sofa, no chewed furniture (yet).
 
-## 3D view
+## 2D, with a 3D preview
 
-The app opens in 3D (three.js) with free animated models: a Shiba Inu or Husky, a cat, and you as a KayKit character. The same simulation drives both views, so everything below works in either; the button under the scene switches to the classic 2D view, which is also the fallback when WebGL isn't available.
+The app runs in 2D. A **Try 3D (preview)** button shows the same simulation drawn in 3D (three.js) with free animated models: a Shiba Inu or Husky, a cat, and you as a KayKit character. The free models aren't good enough for the main view yet. See `docs/architecture.md` for how the code is layered so a proper 3D version can be added later without changing the pet's core.
 
 - The models come with animation libraries (the dogs: idle, walk, gallop, eat, sniff, jump, lie down; the owner: walk, throw, pick up, use item, crouch, wave, cheer, sit on the floor and more). The app picks the clip that matches what the pet or owner is doing.
 - Poses the libraries lack are made by turning bones on top of the animation: sitting, the play bow, shaking a paw, tail wagging, ears and a head tilt.
@@ -62,10 +62,13 @@ Keyboard shortcuts at home: F feeds, T gives a treat, B throws the ball, W start
 | `src/pet.js` | Pet data: look, traits, needs, bond, saving, catching up after time away |
 | `src/learning.js` | Tricks, words, routines, habits, journal milestones |
 | `src/bond.js` | Hearts, daily caps, bond levels and unlocks |
-| `src/finds.js` | Things to find on walks, and their drawings |
+| `src/finds.js` | Things to find on walks, and the collection |
+| `src/finds-art.js` | Drawings of finds |
 | `src/commands.js` | Turns what you type or say into name, cue, topic and tone |
-| `src/world.js` | The simulation: activities, decision making, the owner's hands, ball physics, pouring, lure training, leash walks |
-| `src/owner.js` | Your character: options and drawing, with arm and leg IK |
+| `src/world.js` | The pet's behaviour: activities, decision making, reactions to you. No coordinates; it asks the space |
+| `src/space-side.js` | The side-on space: positions, movement, ball physics, the leash, hit tests |
+| `src/owner-look.js` | Your look options and the default |
+| `src/owner-art.js` | Draws you in 2D, with arm and leg IK |
 | `src/sound.js` | Synthesised barks and meows, plus custom voice clips |
 | `src/media-store.js` | Photos and voice clips in IndexedDB |
 | `src/pet-art.js` | Draws the cat or dog from its look and pose |

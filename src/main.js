@@ -8,10 +8,12 @@ import {
 } from './pet.js';
 import { TRICKS, WORDS, expects, formatHour, favouriteActivity, canLearn } from './learning.js';
 import { level, HEART_SOURCES, DAILY_CAP, heartsToday, unlocked, unlockLevel, today } from './bond.js';
-import { FINDS, drawFind } from './finds.js';
-import { World, VIEW_W, VIEW_H, UNITS_PER_METER, petScale } from './world.js';
+import { FINDS } from './finds.js';
+import { drawFind } from './finds-art.js';
+import { World, petScale } from './world.js';
+import { VIEW_W, VIEW_H } from './space-side.js';
 import { render } from './renderer.js';
-import { SKIN_TONES, HAIR_COLORS, HAIR_STYLES, TOP_COLORS, BOTTOM_COLORS, defaultOwner } from './owner.js';
+import { SKIN_TONES, HAIR_COLORS, HAIR_STYLES, TOP_COLORS, BOTTOM_COLORS, defaultOwner } from './owner-look.js';
 import { Voice, VOICE_SLOTS } from './sound.js';
 import { MediaStore, photoToBlob, blobToImage } from './media-store.js';
 
@@ -79,7 +81,8 @@ function fitCanvas(canvas) {
 }
 
 // Pointer position in world units (the walk camera scrolls the view).
-function use3D() { return Boolean(three) && prefs.get('view', '3d') === '3d'; }
+// 2D is the main view; the 3D view is an experimental preview you can switch on.
+function use3D() { return Boolean(three) && prefs.get('view', '2d') === '3d'; }
 
 // Show the WebGL canvas under the 2D one, or hide it.
 function setStack(gl, on) {
@@ -439,7 +442,7 @@ $('act-sound').addEventListener('click', () => {
 function renderViewButton() {
   const b = $('act-view');
   b.hidden = !three;
-  b.textContent = use3D() ? '2D view' : '3D view';
+  b.textContent = use3D() ? 'Back to 2D' : 'Try 3D (preview)';
 }
 
 function renderSoundButton() {
@@ -785,7 +788,7 @@ function renderPanel() {
   $('walk-actions').hidden = !walking;
   if (walking) {
     $('place-picker').hidden = true;
-    $('walk-stat').textContent = `${Math.round(world.walk.distance / UNITS_PER_METER)} m · ${world.walk.place.name ?? 'The park'}`;
+    $('walk-stat').textContent = `${Math.round(world.walkedMeters())} m · ${world.walk.place.name ?? 'The park'}`;
   }
   $('hint').textContent = contextHint();
   renderSoundButton();

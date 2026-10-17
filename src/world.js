@@ -1,6 +1,12 @@
-// The simulation: where the pet and its owner are, what the pet is doing,
-// and how it reacts to what the owner does with their hands. Everything here
-// is plain data that the renderer draws each frame.
+// The simulation: what the pet is doing, how it decides what to do next, and
+// how it reacts to what the owner does. Everything here is plain data that a
+// renderer draws each frame.
+//
+// Behaviour never works with coordinates directly. Where things are and how
+// they move is the job of a space (space-side.js for the side-on room), mixed
+// into World at the bottom of this file. Activities ask the space questions
+// such as approach('bowl'), near(ball, 130) or heldHigh(treat), so a 3D space
+// can be swapped in without touching the behaviour. See docs/architecture.md.
 
 import {
   tickNeeds, addNeeds, portionGrams, sizeScale, mood, addJournal,
@@ -12,26 +18,7 @@ import {
 import { earn, addHearts, unlocked, today } from './bond.js';
 import { pickFind, collect, findById } from './finds.js';
 import { parseUtterance } from './commands.js';
-import { shoulderPoint, OWNER } from './owner.js';
-
-export const VIEW_W = 800;
-export const VIEW_H = 450;
-export const GROUND = 392;
-export const BAG_X = 38;
-export const JAR_X = 88;
-export const BOWL_X = 150;
-export const BED_X = 688;
-export const BALL_R = 9;
-export const UNITS_PER_METER = 45;
-export const LEASH = 170;
-export const GRAVITY = 980;
-const MIN_X = 60;
-const MAX_X = 745;
-const ARM_REACH = OWNER.upperArm + OWNER.forearm - 6;
-
-const GAITS = { walk: 55, trot: 105, run: 210 };
-const OWNER_SPEED = 130;
-const OWNER_WALK_SPEED = 95;
+import { sideSpace } from './space-side.js';
 
 const POSES = {
   stand: { sit: 0, lie: 0, head: 0, eyes: 0, mouth: 0, ears: 0.55, tailUp: 0.55, wag: 0.15, paw: 0, tilt: 0, groom: 0, chew: 0, crouch: 0 },
@@ -59,17 +46,28 @@ export const petScale = (pet) => sizeScale(pet.look, pet.species) * 1.3;
 
 const article = (name) => `${/^[aeiou]/i.test(name) ? 'an' : 'a'} ${name.toLowerCase()}`;
 
-const isNight = (date) => date.getHours() >= 22 || date.getHours() < 6;
-const clampX = (x) => Math.min(MAX_X, Math.max(MIN_X, x));
-const lerp = (a, b, t) => a + (b - a) * t;
+// Everything the behaviour asks of a space. A space (space-side.js today, a
+// 3D room one day) must provide all of these; a test checks it.
+export const SPACE_CONTRACT = [
+  // layout
+  'placeAtHome', 'placeForWalk', 'placeBackHome',
+  // moving and facing
+  'goTo', 'approach', 'stop', 'face', 'faceOwner', 'faceAway', 'turnAround', 'near',
+  // places
+  'placeOf', 'wanderSpot', 'farSide', 'ownerSpot', 'sideOfOwner', 'besideOwner',
+  // the pet's head
+  'headPoint', 'mouthPoint', 'atMouth', 'heldHigh', 'heldLow',
+  // the ball, treats and food
+  'ballLanding', 'canGrab', 'shouldLeap', 'dropBall', 'batBall', 'launchBall', 'lobBallTo', 'dropTreat', 'overBowl',
+  // the owner's hands
+  'hitTest', 'reachFor', 'walkOwnerTo',
+  // walks
+  'walkedMeters', 'spawnFind', 'scheduleFind', 'spawnCritter',
+  // each step
+  'moveOwner', 'holdLeash', 'moveBody', 'moveBall', 'moveFloorTreat', 'moveParticles',
+];
 
-// Where a ball in flight will land on the floor, ignoring walls.
-function landingX(ball) {
-  const floor = GROUND - BALL_R;
-  const disc = ball.vy * ball.vy + 2 * GRAVITY * Math.max(0, floor - ball.y);
-  const t = (ball.vy + Math.sqrt(disc)) / GRAVITY;
-  return ball.x + ball.vx * t;
-}
+const isNight = (date) => date.getHours() >= 22 || date.getHours() < 6;
 
 // Each activity: label (status line), enter, tick, optional exit.
 // tick returns true when finished; it may also start another activity.
@@ -79,15 +77,15 @@ const ACTS = {
     enter(w, a) { a.dur = w.rand(3, 7); a.turnAt = w.rand(1, a.dur); w.setPose('stand'); },
     tick(w, a) {
       w.stop();
-      if (a.turnAt && a.t > a.turnAt) { w.body.dir *= -1; a.turnAt = 0; }
+      if (a.turnAt && a.t > a.turnAt) { w.turnAround(); a.turnAt = 0; }
       return a.t > a.dur;
     },
   },
 
   wander: {
     label: (w) => `${w.pet.name} is pottering around.`,
-    enter(w, a) { a.x = w.pickSpot(120); w.setPose('stand', { wag: 0.25 }); },
-    tick(w, a) { return w.goTo(a.x, 'walk'); },
+    enter(w, a) { a.spot = w.wanderSpot(120); w.setPose('stand', { wag: 0.25 }); },
+    tick(w, a) { return w.goTo(a.spot, 'walk'); },
   },
 
   follow: {
@@ -105,10 +103,10 @@ const ACTS = {
 
   sniff: {
     label: (w) => `${w.pet.name} is sniffing something interesting.`,
-    enter(w, a) { a.x = w.pickSpot(60); a.phase = 'go'; w.setPose('stand', { head: 0.5 }); },
+    enter(w, a) { a.spot = w.wanderSpot(60); a.phase = 'go'; w.setPose('stand', { head: 0.5 }); },
     tick(w, a) {
       if (a.phase === 'go') {
-        if (w.goTo(a.x, 'walk')) { a.phase = 'sniff'; a.until = a.t + w.rand(2, 4); w.setPose('sniff'); }
+        if (w.goTo(a.spot, 'walk')) { a.phase = 'sniff'; a.until = a.t + w.rand(2, 4); w.setPose('sniff'); }
         return false;
       }
       w.stop();
@@ -139,7 +137,7 @@ const ACTS = {
     },
     tick(w, a) {
       if (a.phase === 'go') {
-        if (w.goTo(a.atFeet ? w.ownerSpot() : BED_X, 'walk')) a.phase = 'settle';
+        if (w.goTo(a.atFeet ? w.ownerSpot() : w.placeOf('bed'), 'walk')) a.phase = 'settle';
         return false;
       }
       w.stop();
@@ -162,7 +160,7 @@ const ACTS = {
     tick(w, a, dt) {
       const pet = w.pet;
       if (a.phase === 'go') {
-        if (w.goTo(BOWL_X + 48 * w.scale, 'trot')) { a.phase = 'eat'; w.body.dir = -1; w.setPose('eat'); }
+        if (w.approach('bowl', 48, 'trot')) { a.phase = 'eat'; w.setPose('eat'); }
         return false;
       }
       w.stop();
@@ -193,7 +191,7 @@ const ACTS = {
     tick(w, a) {
       if (w.pet.bowlGrams > 0) { w.start('eat'); return false; }
       if (a.phase === 'go') {
-        if (w.goTo(BOWL_X + 55 * w.scale, 'walk')) { a.phase = 'wait'; a.from = a.t; w.faceOwner(); w.setPose('sit', { ears: 0.9, tilt: 0.4 }); }
+        if (w.approach('bowl', 55, 'walk')) { a.phase = 'wait'; a.from = a.t; w.faceOwner(); w.setPose('sit', { ears: 0.9, tilt: 0.4 }); }
         return false;
       }
       w.stop();
@@ -223,12 +221,12 @@ const ACTS = {
 
   zoomies: {
     label: (w) => `${w.pet.name} has the zoomies!`,
-    enter(w, a) { a.laps = Math.round(w.rand(3, 5)); a.x = w.body.x < 400 ? MAX_X - 30 : MIN_X + 60; w.setPose('happy'); },
+    enter(w, a) { a.laps = Math.round(w.rand(3, 5)); a.spot = w.farSide(); w.setPose('happy'); },
     tick(w, a) {
-      if (w.goTo(a.x, 'run')) {
+      if (w.goTo(a.spot, 'run')) {
         a.laps -= 1;
         addNeeds(w.pet, { fun: 3 });
-        a.x = a.x > 400 ? MIN_X + 60 : MAX_X - 30;
+        a.spot = w.farSide(a.spot);
         if (w.chance(0.4)) w.hop();
       }
       return a.laps <= 0;
@@ -241,13 +239,9 @@ const ACTS = {
     tick(w, a) {
       const ball = w.ball;
       if (ball.state !== 'ground' && ball.state !== 'air') return true;
-      if (ball.state === 'air') { w.stop(); w.face(ball.x); return false; }
-      const side = ball.x > w.body.x ? -1 : 1;
-      if (w.goTo(ball.x + side * 26 * w.scale, 'trot')) {
-        w.face(ball.x);
-        ball.state = 'air';
-        ball.vx = w.body.dir * w.rand(140, 320);
-        ball.vy = -w.rand(120, 280);
+      if (ball.state === 'air') { w.stop(); w.face(ball); return false; }
+      if (w.approach(ball, 26, 'trot')) {
+        w.batBall();
         addNeeds(w.pet, { fun: 4 });
         a.bats -= 1;
       }
@@ -269,7 +263,7 @@ const ACTS = {
     enter(w) { w.stop(); w.setPose(w.pet.species === 'cat' ? 'crouch' : 'playBow'); },
     tick(w, a) {
       w.stop();
-      w.face(w.ball.x);
+      w.face(w.ball);
       if (w.pet.species === 'dog' && a.t - (a.lastBark ?? -9) > 3 && w.chance(0.02)) { a.lastBark = a.t; w.vocal('excited', 1); }
       return w.ball.state !== 'drag';
     },
@@ -282,24 +276,18 @@ const ACTS = {
       const ball = w.ball;
       if (ball.state !== 'air' && ball.state !== 'ground') return true;
       if (a.t > 14) return true;
-      const s = w.scale;
-      const mouth = w.mouthPoint();
-
       if (ball.state === 'air') {
         // Leap for a ball coming down nearby; catch it if it reaches the mouth.
-        if (Math.hypot(ball.x - mouth.x, ball.y - mouth.y) < 24 * s) { w.pickUp(true, a); return false; }
-        const above = mouth.y - ball.y;
-        if (w.pet.species === 'dog' && ball.vy > 0 && Math.abs(ball.x - mouth.x) < 50 * s && above > 10 && above < 140 * s) w.hop(330);
-        const land = clampX(landingX(ball));
-        w.goTo(land - Math.sign(land - w.body.x || 1) * 75 * s, 'run');
+        if (w.atMouth(ball, 24)) { w.pickUp(true, a); return false; }
+        if (w.pet.species === 'dog' && w.shouldLeap(ball)) w.hop(330);
+        w.approach(w.ballLanding(), 75, 'run');
         return false;
       }
       // Ball on the floor: run up, lower the head and grab it.
-      const side = Math.sign(ball.x - w.body.x || 1);
-      const close = Math.abs(ball.x - w.body.x) < 130 * s;
+      const close = w.near(ball, 130);
       w.body.target.head = close ? 0.8 : 0;
-      if (Math.abs(ball.x - mouth.x) < 34 * s && side === w.body.dir) { w.pickUp(false, a); return false; }
-      if (w.goTo(ball.x - side * 85 * s, close ? 'trot' : 'run')) w.face(ball.x);
+      if (w.canGrab(ball)) { w.pickUp(false, a); return false; }
+      w.approach(ball, 85, close ? 'trot' : 'run');
       return false;
     },
   },
@@ -380,16 +368,13 @@ const ACTS = {
     tick(w, a) {
       const d = w.drag;
       if (!d || d.item !== 'treat') return true;
-      const s = w.scale;
-      const side = d.x >= w.body.x ? 1 : -1;
-      const near = w.goTo(d.x - side * 42 * s, 'trot') || Math.abs(d.x - w.body.x) < 70 * s;
+      const near = w.approach(d, 42, 'trot') || w.near(d, 70);
       if (!near) { a.pose = 'stand'; return false; }
       w.stop();
-      w.face(d.x);
-      const head = w.headPoint();
+      w.face(d);
       let pose = 'stand';
-      if (d.y < head.y - 30 * s) pose = 'sit';
-      else if (d.y > GROUND - 40 * s) pose = 'down';
+      if (w.heldHigh(d)) pose = 'sit';
+      else if (w.heldLow(d)) pose = 'down';
       if (pose !== a.pose) {
         a.pose = pose;
         if (pose === 'sit') w.setPose('sit', { ...POSES.beg, tilt: -0.5 });
@@ -410,8 +395,7 @@ const ACTS = {
       const t = w.floorTreat;
       if (!t) return true;
       if (a.phase === 'go') {
-        const side = t.x >= w.body.x ? 1 : -1;
-        if (w.goTo(t.x - side * 45 * w.scale, 'trot')) { a.phase = 'eat'; a.from = a.t; w.face(t.x); w.setPose('eat'); }
+        if (w.approach(t, 45, 'trot')) { a.phase = 'eat'; a.from = a.t; w.setPose('eat'); }
         return a.t > 10;
       }
       w.stop();
@@ -436,7 +420,7 @@ const ACTS = {
     },
     tick(w, a) {
       w.stop();
-      if (a.trick === 'spin' && a.t < 1.2 && a.t - (a.lastFlip ?? -1) > 0.3) { a.lastFlip = a.t; w.body.dir *= -1; w.hop(140); }
+      if (a.trick === 'spin' && a.t < 1.2 && a.t - (a.lastFlip ?? -1) > 0.3) { a.lastFlip = a.t; w.turnAround(); w.hop(140); }
       return a.t > 4;
     },
   },
@@ -484,7 +468,7 @@ const ACTS = {
 
   sulk: {
     label: (w) => `${w.pet.name} is sulking.`,
-    enter(w, a) { w.stop(); w.body.dir = w.owner.x > w.body.x ? -1 : 1; w.setPose('lie', POSES.sad); a.dur = w.rand(4, 7); },
+    enter(w, a) { w.stop(); w.faceAway(w.owner); w.setPose('lie', POSES.sad); a.dur = w.rand(4, 7); },
     tick(w, a) { w.stop(); return a.t > a.dur; },
   },
 
@@ -545,24 +529,23 @@ const ACTS = {
     tick(w, a, dt) {
       const p = w.pet;
       const o = w.owner;
-      const s = w.scale;
       const moving = o.walkInput !== 0;
       if (moving) {
         addNeeds(p, { fun: 0.12 * dt, affection: 0.04 * dt });
       }
       if (a.phase !== 'tired' && p.needs.energy < 12) w.setLeash(a, 'tired', 999);
       const f = w.walk.find;
-      if (f && (a.phase === 'walk' || a.phase === 'wait') && Math.abs(f.x - w.body.x) < 240) w.setLeash(a, 'found');
-      const ahead = moving ? o.walkInput : (w.body.x >= o.x ? 1 : -1);
+      if (f && (a.phase === 'walk' || a.phase === 'wait') && w.near(f, 185)) w.setLeash(a, 'found');
+      const ahead = moving ? o.walkInput : w.sideOfOwner();
       const tight = w.walk.tension > 0.85;
 
       switch (a.phase) {
         case 'walk':
         case 'wait': {
-          const spot = o.x + ahead * 70 * s;
-          if (Math.abs(spot - w.body.x) > 18) {
+          const spot = w.besideOwner(ahead, 70);
+          if (!w.near(spot, 14)) {
             if (a.phase === 'wait') w.setLeash(a, 'walk');
-            w.goTo(spot, Math.abs(spot - w.body.x) > 90 ? 'run' : 'trot');
+            w.goTo(spot, w.near(spot, 70) ? 'trot' : 'run');
           } else {
             w.stop();
             if (!moving && a.phase === 'walk' && a.t > (a.stillSince ?? (a.stillSince = a.t)) + 2.5) w.setLeash(a, 'wait');
@@ -573,7 +556,7 @@ const ACTS = {
             if (r < 0.45) w.setLeash(a, 'sniff', w.rand(2, 4));
             else if (r < 0.75) {
               w.setLeash(a, 'squirrel', 2.8);
-              w.walk.critter = { x: o.x + ahead * 380, dir: ahead, kind: p.species === 'dog' ? 'squirrel' : 'bird', t: 0 };
+              w.spawnCritter(ahead);
             } else a.next = a.t + w.rand(5, 9);
           }
           break;
@@ -587,18 +570,17 @@ const ACTS = {
         case 'squirrel': {
           const c = w.walk.critter;
           if (p.species === 'dog' && c) {
-            w.goTo(c.x, 'run');
+            w.goTo(c, 'run');
             if (a.t - (a.lastBark ?? -9) > 0.9) { a.lastBark = a.t; w.vocal('alert', 0.8); }
             addNeeds(p, { fun: 1.5 * dt });
-          } else { w.stop(); if (c) w.face(c.x); }
+          } else { w.stop(); if (c) w.face(c); }
           if (a.t > a.until || !c) w.setLeash(a, 'walk');
           break;
         }
         case 'found': {
           if (!f) { w.setLeash(a, 'walk'); break; }
           if (a.sniffFrom === undefined) {
-            const side = f.x >= w.body.x ? 1 : -1;
-            if (w.goTo(f.x - side * 80 * s, 'trot')) { a.sniffFrom = a.t; w.face(f.x); w.setPose('sniff'); }
+            if (w.approach(f, 80, 'trot')) { a.sniffFrom = a.t; w.setPose('sniff'); }
           } else {
             w.stop();
             if (a.t - a.sniffFrom > 1.4) { w.pickUpFind(); w.setLeash(a, 'walk'); }
@@ -642,14 +624,14 @@ export class World {
     this.cam = 0;
     this.scale = petScale(pet);
     this.body = {
-      x: 330, dir: 1, vx: 0, speed: 0, gait: 0, wagPhase: 0, jump: 0, jumpV: 0,
+      x: 0, dir: 1, vx: 0, speed: 0, gait: 0, wagPhase: 0, jump: 0, jumpV: 0,
       pose: { ...POSES.stand }, target: { ...POSES.stand },
     };
     this.owner = {
-      x: 560, dir: -1, vx: 0, speed: 0, phase: 0, crouch: 0, hand: null,
+      x: 0, dir: -1, vx: 0, speed: 0, phase: 0, crouch: 0, hand: null,
       targetX: null, walkInput: 0, lastMoved: -99, bubble: null,
     };
-    this.ball = { state: 'ground', x: 470, y: GROUND - BALL_R, vx: 0, vy: 0, spin: 0 };
+    this.ball = { state: 'ground', x: 0, y: 0, vx: 0, vy: 0, spin: 0 };
     this.drag = null; // { item: 'ball' | 'scoop' | 'treat', x, y, poured }
     this.floorTreat = null;
     this.particles = [];
@@ -660,6 +642,7 @@ export class World {
     this.walk = null;
     this.shownGift = null; // a gift lying at the owner's feet
     this.activity = null;
+    this.placeAtHome();
     this.start('idle');
   }
 
@@ -670,41 +653,6 @@ export class World {
 
   setPose(name, extra = {}) {
     this.body.target = { ...POSES.stand, ...POSES[name], ...extra };
-  }
-
-  stop() { this.body.vx = 0; }
-
-  face(x) { if (Math.abs(x - this.body.x) > 2) this.body.dir = x > this.body.x ? 1 : -1; }
-
-  faceOwner() { this.face(this.owner.x); }
-
-  goTo(x, gait = 'walk') {
-    const b = this.body;
-    const target = this.scene === 'home' ? clampX(x) : x;
-    const dx = target - b.x;
-    if (Math.abs(dx) < 6) { b.vx = 0; return true; }
-    const speed = GAITS[gait] * Math.sqrt(this.scale);
-    b.dir = Math.sign(dx);
-    // Ease in when arriving so the pet does not skid to a stop.
-    b.vx = b.dir * Math.min(speed, Math.max(30, Math.abs(dx) * 3));
-    return false;
-  }
-
-  pickSpot(minDistance) {
-    for (let i = 0; i < 8; i++) {
-      const x = this.rand(MIN_X + 40, MAX_X - 40);
-      if (Math.abs(x - this.body.x) >= minDistance) return x;
-    }
-    return this.body.x > 400 ? MIN_X + 60 : MAX_X - 60;
-  }
-
-  // A spot right next to the owner, on whichever side the pet is.
-  ownerSpot() {
-    const o = this.owner;
-    const side = this.body.x < o.x ? -1 : 1;
-    const x = o.x + side * 85 * this.scale;
-    if (this.scene !== 'home') return x;
-    return x < MIN_X || x > MAX_X ? o.x - side * 85 * this.scale : x;
   }
 
   hop(v = 240) { if (this.body.jump <= 0) this.body.jumpV = v; }
@@ -727,30 +675,6 @@ export class World {
         age: 0, life: type === 'crumb' ? 0.7 : type === 'kibble' ? 1.2 : 1.8,
       });
     }
-  }
-
-  // Centre of the pet's head, from the blend of standing, sitting, lying and lowered poses.
-  headPoint() {
-    const b = this.body;
-    const p = b.pose;
-    const s = this.scale;
-    const cat = this.pet.species === 'cat';
-    const sit = p.sit * (1 - p.lie);
-    let dx = cat ? 50 : 58;
-    let dy = cat ? 80 : 95;
-    dx = lerp(dx, cat ? 38 : 45, sit);
-    dy = lerp(dy, cat ? 95 : 112, sit);
-    dx = lerp(dx, cat ? 54 : 62, p.lie);
-    dy = lerp(dy, cat ? 42 : 50, p.lie);
-    dx = lerp(dx, dx + 20, p.head);
-    dy = lerp(dy, 22, p.head);
-    return { x: b.x + b.dir * dx * s, y: GROUND - b.jump - dy * s };
-  }
-
-  mouthPoint() {
-    const h = this.headPoint();
-    const s = this.scale;
-    return { x: h.x + this.body.dir * 26 * s, y: h.y + 10 * s };
   }
 
   isAsleep() { return this.activity?.type === 'sleep' && this.activity.phase === 'sleep'; }
@@ -777,16 +701,6 @@ export class World {
       if (note) this.onNote(note);
     }
     this.start(a.retrieve ? 'fetchBack' : 'keepBall');
-  }
-
-  dropBall(forward) {
-    const b = this.body;
-    const mouth = this.mouthPoint();
-    this.ball.state = 'air';
-    this.ball.x = clampX(mouth.x);
-    this.ball.y = Math.min(GROUND - BALL_R, mouth.y);
-    this.ball.vx = b.dir * forward;
-    this.ball.vy = -60;
   }
 
   milestone(key, text) {
@@ -904,57 +818,7 @@ export class World {
     if (note) this.onNote(note);
   }
 
-  // --- what the owner's hands can touch ---
-
-  hitTest(x, y) {
-    if (this.scene === 'home') {
-      if (Math.abs(x - BAG_X) < 28 && y > GROUND - 78 && y < GROUND + 4) return 'bag';
-      if (Math.abs(x - JAR_X) < 20 && y > GROUND - 52 && y < GROUND + 4) return 'jar';
-    }
-    if (this.ballHit(x, y)) return 'ball';
-    if (this.petHit(x, y)) return 'pet';
-    if (this.scene !== 'home') return 'ground';
-    if (Math.abs(x - this.owner.x) < 30 && y > GROUND - 320 && y < GROUND - 40) return 'owner';
-    if (y > 296) return 'floor';
-    return 'wall';
-  }
-
-  petHit(x, y) {
-    const s = this.scale;
-    const b = this.body;
-    const head = this.headPoint();
-    const inBody = Math.abs(x - (b.x + b.dir * 10 * s)) < 70 * s && y > GROUND - b.jump - 95 * s && y < GROUND + 6;
-    const inHead = Math.hypot(x - head.x, y - head.y) < 34 * s;
-    return inBody || inHead;
-  }
-
-  ballHit(x, y) {
-    const ball = this.ball;
-    if (this.scene !== 'home') return false;
-    if (ball.state === 'mouth') {
-      const m = this.mouthPoint();
-      return Math.hypot(x - m.x, y - m.y) < 30 * this.scale;
-    }
-    return ball.state === 'ground' && Math.hypot(x - ball.x, y - ball.y) < 30;
-  }
-
-  shoulder() { return shoulderPoint(this.owner, GROUND); }
-
-  // Keep the owner close enough to reach a point, walking over if needed.
-  reachFor(x, y) {
-    const o = this.owner;
-    o.hand = { x, y };
-    const sh = this.shoulder();
-    if (Math.hypot(x - sh.x, y - sh.y) > ARM_REACH + 10 && this.scene === 'home') {
-      const side = x >= o.x ? 1 : -1;
-      o.targetX = Math.min(MAX_X, Math.max(MIN_X, x - side * 70));
-    }
-  }
-
-  walkOwnerTo(x) {
-    if (this.scene !== 'home') return;
-    this.owner.targetX = Math.min(MAX_X, Math.max(MIN_X, x));
-  }
+  // --- what the owner's hands do ---
 
   grab(item, x, y) {
     if (this.scene !== 'home' && item !== 'treat') return false;
@@ -993,34 +857,24 @@ export class World {
     this.owner.hand = null;
     if (d.item === 'ball') this.throwFromHand(d.x, d.y, vx, vy);
     if (d.item === 'treat') {
-      const mouth = this.mouthPoint();
-      if (Math.hypot(d.x - mouth.x, d.y - mouth.y) < 60 * this.scale && !this.isAsleep()) this.handTreat();
+      if (this.atMouth(d, 60) && !this.isAsleep()) this.handTreat();
       else {
-        this.floorTreat = { x: d.x, y: d.y, vy: vy * 0.3 };
+        this.dropTreat(d, vy);
         if (this.activity.type === 'lure' || (!this.isAsleep() && !this.isBusy())) this.start('floorTreat');
       }
     }
   }
 
   throwFromHand(x, y, vx, vy) {
-    const ball = this.ball;
-    const speed = Math.hypot(vx, vy);
-    const max = 1300;
-    const k = speed > max ? max / speed : 1;
-    ball.state = 'air';
-    ball.x = x;
-    ball.y = Math.min(y, GROUND - BALL_R);
-    ball.vx = vx * k;
-    ball.vy = vy * k;
-    if (speed < 150) {
+    if (!this.launchBall(x, y, vx, vy)) {
       // Just dropped it.
       if (this.activity.type === 'watchBall') this.start('idle');
       return;
     }
-    this.reactToThrow(landingX(ball));
+    this.reactToThrow(this.ballLanding());
   }
 
-  reactToThrow(landX) {
+  reactToThrow(landing) {
     const p = this.pet;
     if (this.isAsleep() && !this.chance(0.15)) return;
     const t = p.traits;
@@ -1032,7 +886,7 @@ export class World {
     want += (p.memory.words.ball ?? 0) * 0.15;
     if (!this.chance(want)) {
       this.wake();
-      this.face(landX);
+      this.face(landing);
       if (this.activity.type === 'watchBall') this.start('idle');
       this.speak(cat ? '…' : VOICE_LINES.dog.content, 1.2);
       return;
@@ -1048,21 +902,16 @@ export class World {
   throwBall(targetX) {
     if (this.scene !== 'home') return this.onToast('Save the ball for the living room.');
     if (this.ball.state === 'mouth') this.start('idle'); // asks the pet to let go
-    const o = this.owner;
-    const tx = clampX(targetX ?? this.rand(MIN_X + 60, MAX_X - 60));
-    const x0 = o.x + o.dir * 30;
-    const y0 = GROUND - 200;
-    const T = 1;
+    const t = this.lobBallTo(targetX);
     this.ball.state = 'drag';
-    this.throwFromHand(x0, y0, (tx - x0) / T, (GROUND - BALL_R - y0 - 0.5 * GRAVITY * T * T) / T);
+    this.throwFromHand(t.x, t.y, t.vx, t.vy);
   }
 
   // Pour from the scoop into the bowl while it is held over it.
   pour(dt) {
     const d = this.drag;
     if (!d || d.item !== 'scoop') return;
-    const over = Math.abs(d.x - BOWL_X) < 48 && d.y < GROUND - 15 && d.y > GROUND - 220;
-    if (!over) return;
+    if (!this.overBowl(d)) return;
     const p = this.pet;
     const portion = portionGrams(p);
     const cap = portion * 2;
@@ -1231,17 +1080,14 @@ export class World {
     const p = this.pet;
     if (this.drag) this.release();
     this.stopPetting();
-    if (this.ball.state === 'mouth' || this.ball.state === 'air') { this.ball.state = 'ground'; this.ball.y = GROUND - BALL_R; }
     this.floorTreat = null;
     this.scene = 'park';
     this.walk = {
       place, distance: 0, startedAt: this.time, critter: null, tension: 0,
-      find: null, nextFindAt: this.rand(70, 140) * UNITS_PER_METER, offLeash: false,
+      find: null, nextFindAt: 0, offLeash: false,
     };
-    Object.assign(this.owner, { x: 260, dir: 1, vx: 0, targetX: null, walkInput: 0, hand: null });
-    this.body.x = 350;
-    this.body.vx = 0;
-    this.cam = 0;
+    this.scheduleFind(70, 140);
+    this.placeForWalk();
     noteHabit(p, 'walks');
     const note = recordRoutine(p, 'walk', this.now());
     if (note) this.onNote(note);
@@ -1254,7 +1100,7 @@ export class World {
 
   endWalk() {
     if (this.scene !== 'park') return null;
-    const meters = Math.round(this.walk.distance / UNITS_PER_METER);
+    const meters = Math.round(this.walkedMeters());
     const minutes = Math.max(1, Math.round((this.time - this.walk.startedAt) / 60));
     const stats = this.pet.memory.stats;
     stats.walkMeters += meters;
@@ -1262,10 +1108,7 @@ export class World {
     if (stats.walks === 1) addJournal(this.pet, `First walk together: ${meters} m.`);
     this.scene = 'home';
     this.walk = null;
-    this.cam = 0;
-    Object.assign(this.owner, { x: 560, dir: -1, vx: 0, walkInput: 0, targetX: null });
-    this.body.x = 440;
-    this.body.vx = 0;
+    this.placeBackHome();
     this.start('idle');
     return { meters, minutes };
   }
@@ -1285,7 +1128,7 @@ export class World {
     const f = w.find;
     if (!f) return;
     w.find = null;
-    w.nextFindAt = w.distance + this.rand(120, 260) * UNITS_PER_METER;
+    this.scheduleFind(120, 260);
     const first = collect(this.pet, f.item.id, w.place.name ?? 'The park');
     this.vocal('happy', 1);
     const text = `${this.pet.name} found ${article(f.item.name)}!`;
@@ -1310,7 +1153,7 @@ export class World {
     const p = this.pet;
     p.memory.lastGiftDay = today(this.now());
     collect(p, item.id, 'A gift');
-    this.shownGift = { id: item.id, x: this.mouthPoint().x, until: this.time + 8 };
+    this.shownGift = { id: item.id, ...this.mouthPoint(), until: this.time + 8 };
     this.vocal('greet', 1.4);
     const text = `${p.name} brought you ${article(item.name)}.`;
     if (this.milestone('gift', `${p.name} brought you a gift for the first time: ${item.name.toLowerCase()}.`)) this.onNote(text);
@@ -1346,131 +1189,7 @@ export class World {
     if (this.reward && this.time > this.reward.until) this.reward = null;
     if (this.shownGift && this.time > this.shownGift.until) this.shownGift = null;
   }
-
-  moveOwner(dt) {
-    const o = this.owner;
-    if (this.scene === 'park') {
-      const resisting = this.walk.tension > 0.8 && ['flop', 'sniff'].includes(this.activity.phase) && Math.sign(this.body.x - o.x) !== o.walkInput;
-      o.vx = o.walkInput * OWNER_WALK_SPEED * (resisting ? 0.45 : 1);
-      if (o.walkInput) o.dir = o.walkInput;
-      const step = Math.abs(o.vx * dt);
-      this.walk.distance += step;
-      this.earn('walk', step / UNITS_PER_METER);
-      const w = this.walk;
-      if (!w.find && w.distance >= w.nextFindAt) {
-        w.find = { x: o.x + (o.walkInput || o.dir) * 360, item: pickFind(this.pet.species, this.rng) };
-      }
-      if (w.find && Math.abs(w.find.x - o.x) > 700) {
-        w.find = null;
-        w.nextFindAt = w.distance + this.rand(60, 120) * UNITS_PER_METER;
-      }
-    } else if (o.targetX !== null) {
-      const dx = o.targetX - o.x;
-      if (Math.abs(dx) < 4) { o.targetX = null; o.vx = 0; } else {
-        o.vx = Math.sign(dx) * Math.min(OWNER_SPEED, Math.abs(dx) * 4);
-        o.dir = Math.sign(dx);
-      }
-    } else o.vx = 0;
-    o.x += o.vx * dt;
-    if (this.scene === 'home') o.x = Math.min(MAX_X, Math.max(MIN_X, o.x));
-    o.speed = Math.abs(o.vx);
-    o.phase += dt * o.speed / 22;
-    if (o.speed > 5) o.lastMoved = this.time;
-    if (o.hand && o.speed < 5) o.dir = o.hand.x >= o.x ? 1 : -1;
-    // Crouch to reach low things.
-    const want = o.hand ? Math.min(1, Math.max(0, (o.hand.y - (GROUND - 150)) / 110)) : 0;
-    o.crouch += (want - o.crouch) * (1 - Math.exp(-dt * 6));
-    if (this.scene === 'park') {
-      const target = o.x - 330 + o.walkInput * 40;
-      this.cam += (target - this.cam) * (1 - Math.exp(-dt * 3));
-    }
-  }
-
-  // The leash keeps the pet and owner within reach of each other. A lunging
-  // dog pulls its owner along; otherwise the owner tows the pet.
-  holdLeash(dt) {
-    const o = this.owner;
-    const b = this.body;
-    const d = b.x - o.x;
-    const dist = Math.abs(d);
-    // Off the leash, a well-bonded pet still stays within calling distance.
-    const limit = this.walk.offLeash ? LEASH * 1.6 : LEASH;
-    if (dist > limit) {
-      const excess = dist - limit;
-      const lunging = !this.walk.offLeash && this.activity.phase === 'squirrel' && this.pet.species === 'dog';
-      if (lunging) o.x += Math.sign(d) * excess * 0.6;
-      b.x = o.x + Math.sign(d) * limit;
-    }
-    this.walk.tension = this.walk.offLeash ? 0 : Math.min(1, Math.max(0, (Math.abs(b.x - o.x) - (LEASH - 40)) / 40));
-    const c = this.walk.critter;
-    if (c) {
-      c.t += dt;
-      const fleeing = Math.abs(c.x - b.x) < 260 || c.t > 1;
-      c.x += c.dir * (c.kind === 'squirrel' ? 150 : 70) * dt * (fleeing ? 1.6 : 0.2);
-      if (c.t > 5) this.walk.critter = null;
-    }
-  }
-
-  moveBody(dt) {
-    const b = this.body;
-    b.x += b.vx * dt;
-    if (this.scene === 'home') b.x = clampX(b.x);
-    b.speed = Math.abs(b.vx);
-    b.gait += dt * b.speed / (11 * this.scale);
-    // Ease the pose toward its target.
-    const k = 1 - Math.exp(-dt * 7);
-    for (const key of Object.keys(b.target)) b.pose[key] += (b.target[key] - b.pose[key]) * k;
-    b.wagPhase += dt * (5 + b.pose.wag * 13);
-    if (b.jump > 0 || b.jumpV > 0) {
-      b.jump += b.jumpV * dt;
-      b.jumpV -= 1300 * dt;
-      if (b.jump <= 0) { b.jump = 0; b.jumpV = 0; }
-    }
-  }
-
-  moveBall(dt) {
-    const ball = this.ball;
-    if (this.scene !== 'home' || (ball.state !== 'air' && ball.state !== 'ground')) return;
-    ball.vy += GRAVITY * dt;
-    ball.x += ball.vx * dt;
-    ball.y += ball.vy * dt;
-    ball.spin += (ball.vx * dt) / BALL_R;
-    const floor = GROUND - BALL_R;
-    if (ball.y >= floor) {
-      ball.y = floor;
-      if (ball.vy > 90) {
-        ball.vy *= -0.55;
-        ball.vx *= 0.82;
-        ball.state = 'air';
-      } else {
-        ball.vy = 0;
-        ball.state = 'ground';
-      }
-    }
-    if (ball.state === 'ground') ball.vx *= Math.exp(-1.8 * dt);
-    if (ball.x < 14 + BALL_R || ball.x > VIEW_W - 14 - BALL_R) {
-      ball.vx *= -0.6;
-      ball.x = Math.min(VIEW_W - 14 - BALL_R, Math.max(14 + BALL_R, ball.x));
-    }
-  }
-
-  moveFloorTreat(dt) {
-    const t = this.floorTreat;
-    if (!t) return;
-    if (t.y < GROUND - 4) {
-      t.vy += GRAVITY * dt;
-      t.y = Math.min(GROUND - 4, t.y + t.vy * dt);
-    }
-  }
-
-  moveParticles(dt) {
-    for (const pt of this.particles) {
-      pt.age += dt;
-      pt.x += pt.vx * dt;
-      pt.y += pt.vy * dt;
-      if (pt.type === 'crumb' || pt.type === 'kibble') pt.vy += 600 * dt;
-      if (pt.type === 'kibble' && pt.y > GROUND - 14) { pt.y = GROUND - 14; pt.vy = 0; pt.vx = 0; }
-    }
-    this.particles = this.particles.filter((pt) => pt.age < pt.life);
-  }
 }
+
+// Where things are and how they move: the side-on room.
+Object.assign(World.prototype, sideSpace);

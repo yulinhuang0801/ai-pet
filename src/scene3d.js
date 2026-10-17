@@ -7,9 +7,9 @@
 import * as THREE from '../vendor/three/three.module.min.js';
 import { GLTFLoader } from '../vendor/three/addons/GLTFLoader.js';
 import { clone as cloneSkinned } from '../vendor/three/addons/SkeletonUtils.js';
-import { VIEW_W, VIEW_H, GROUND, BOWL_X, BED_X, BAG_X, JAR_X, LEASH } from './world.js';
+import { VIEW_W, VIEW_H, GROUND, BOWL_X, BED_X, BAG_X, JAR_X, LEASH } from './space-side.js';
 import { darkness, skyColors, drawBubble, drawHeart } from './renderer.js';
-import { drawFind } from './finds.js';
+import { drawFind } from './finds-art.js';
 import { portionGrams } from './pet.js';
 
 // Metres per simulation unit. The owner (300 units tall) comes out at 1.7 m.

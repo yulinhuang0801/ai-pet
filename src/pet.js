@@ -2,7 +2,7 @@
 // bond, memory), plus its owner and their places. Pure data + pure functions
 // so it can be tested in Node.
 
-import { defaultOwner } from './owner.js';
+import { defaultOwner } from './owner-look.js';
 import { addHearts, heartsFromTrust } from './bond.js';
 
 export const SAVE_VERSION = 1;

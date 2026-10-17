@@ -2,12 +2,12 @@
 // The scene follows the real time of day: daylight, sunset, lamp-lit night.
 
 import { drawPet, drawBall } from './pet-art.js';
-import { drawOwner } from './owner.js';
+import { drawOwner } from './owner-art.js';
 import {
   VIEW_W, VIEW_H, GROUND, BOWL_X, BED_X, BAG_X, JAR_X, BALL_R, LEASH,
-} from './world.js';
+} from './space-side.js';
 import { portionGrams } from './pet.js';
-import { drawFind } from './finds.js';
+import { drawFind } from './finds-art.js';
 import { unlocked } from './bond.js';
 
 // 0 = full day, 1 = full night, from the local clock.
