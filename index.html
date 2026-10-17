@@ -21,7 +21,10 @@
 
   <section class="creator" id="creator" hidden>
     <div class="creator-preview">
-      <canvas id="preview" aria-label="Preview of your pet"></canvas>
+      <div class="canvas-stack">
+        <canvas id="preview3d" class="gl" hidden aria-hidden="true"></canvas>
+        <canvas id="preview" aria-label="Preview of your pet"></canvas>
+      </div>
       <p class="preview-note" id="preview-note"></p>
     </div>
     <form class="creator-form" id="creator-form" novalidate>
@@ -44,6 +47,10 @@
         <fieldset class="field">
           <legend>Size</legend>
           <div class="segmented" id="size"></div>
+        </fieldset>
+        <fieldset class="field" id="breed-field" hidden>
+          <legend>Breed</legend>
+          <div class="segmented" id="breed"></div>
         </fieldset>
         <fieldset class="field" id="ears-field">
           <legend>Ears</legend>
@@ -115,7 +122,10 @@
   <main class="home" id="home" hidden>
     <div class="play">
       <div class="stage">
-        <canvas id="scene" aria-label="Your pet's room"></canvas>
+        <div class="canvas-stack">
+          <canvas id="scene3d" class="gl" hidden aria-hidden="true"></canvas>
+          <canvas id="scene" aria-label="Your pet's room"></canvas>
+        </div>
         <p class="status" id="status" aria-live="polite"></p>
         <div class="toasts" id="toasts" aria-live="polite"></div>
       </div>
@@ -124,6 +134,7 @@
         <button type="button" id="act-walk">Go for a walk</button>
         <button type="button" id="act-call">Call</button>
         <button type="button" class="ghost" id="act-sound" aria-pressed="true">Sound on</button>
+        <button type="button" class="ghost" id="act-view">2D view</button>
       </div>
       <div class="actions" role="toolbar" aria-label="Walking" id="walk-actions" hidden>
         <button type="button" id="walk-back" class="hold">Walk back</button>
@@ -236,6 +247,7 @@
           <button type="button" class="ghost" id="edit-pet">Edit look &amp; personality</button>
           <button type="button" class="ghost danger" id="reset">Start over</button>
         </div>
+        <p class="credits">3D models: dogs by <a href="https://quaternius.com" target="_blank" rel="noopener">Quaternius</a> (CC0); you and your moves by <a href="https://www.kaylousberg.com" target="_blank" rel="noopener">Kay Lousberg, KayKit</a> (CC0); “<a href="https://sketchfab.com/3d-models/toon-cat-free-b2bd1ee7858444bda366110a2d960386" target="_blank" rel="noopener">Toon Cat FREE</a>” by Omabuarts Studio (<a href="http://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC-BY 4.0</a>).</p>
         <div class="confirm" id="reset-confirm" hidden>
           <p id="reset-text"></p>
           <div class="manage">

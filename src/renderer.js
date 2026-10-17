@@ -19,7 +19,7 @@ export function darkness(date) {
   return 1;
 }
 
-function skyColors(dark) {
+export function skyColors(dark) {
   const mix = (a, b, t) => {
     const pa = a.match(/\w\w/g).map((v) => parseInt(v, 16));
     const pb = b.match(/\w\w/g).map((v) => parseInt(v, 16));
@@ -376,7 +376,7 @@ function drawCritter(ctx, c, x, time) {
   }
 }
 
-function drawHeart(ctx, x, y, size) {
+export function drawHeart(ctx, x, y, size) {
   ctx.beginPath();
   ctx.moveTo(x, y + size * 0.35);
   ctx.bezierCurveTo(x - size, y - size * 0.3, x - size * 0.4, y - size, x, y - size * 0.35);
@@ -408,7 +408,7 @@ function drawParticles(ctx, world) {
   }
 }
 
-function drawBubble(ctx, text, ax, ay, tone = 'pet') {
+export function drawBubble(ctx, text, ax, ay, tone = 'pet') {
   ctx.font = tone === 'pet' ? '700 16px Grandstander, system-ui, sans-serif' : '600 15px Figtree, system-ui, sans-serif';
   const shown = text.length > 42 ? `${text.slice(0, 40)}…` : text;
   const w = ctx.measureText(shown).width + 22;

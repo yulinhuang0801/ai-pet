@@ -68,7 +68,9 @@ Drawing everything by hand doesn't scale to “customise everything”. Options:
 | Animated people for the owner | Quaternius character packs, Mixamo animations | CC0 / free with an Adobe account | 3D. |
 | Engine | three.js (3D) or PixiJS (2D) | MIT | |
 
-The real choice is **stay 2D or move to 3D**:
+**Decision:** build the 3D version first with free models (done; see `assets/CREDITS.md`) and buy realistic breeds later. The 2D view stays as a fallback.
+
+The real choice was **stay 2D or move to 3D**:
 - **2D (current) plus Lottie and Kenney sprites**: keeps everything we've built and the colour customisation, and adds library effects and props. Decorating a home is limited to the side view.
 - **3D with three.js and CC0 models**: library models come with animations; a room can be decorated from any angle; realistic and cartoon pets are just different models. But it's a rewrite of the drawing layer, and free animated dogs and cats are low-poly with few animations, so the realistic look would need paid models.
 

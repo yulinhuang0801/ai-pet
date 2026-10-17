@@ -78,7 +78,7 @@ export function portionGrams(pet) {
 export function defaultLook(species) {
   return species === 'cat'
     ? { size: 'medium', coat: '#8b919c', marking: '#f5f2ec', pattern: 'tabby', ears: 'pointy', eyes: '#5f9a3a', collar: '#2f7f8f', seed: 7 }
-    : { size: 'medium', coat: '#d49a50', marking: '#f5f2ec', pattern: 'patches', ears: 'floppy', eyes: '#4a2f1d', collar: '#d0443c', seed: 3 };
+    : { size: 'medium', coat: '#d49a50', marking: '#f5f2ec', pattern: 'patches', ears: 'floppy', eyes: '#4a2f1d', collar: '#d0443c', seed: 3, breed: 'shiba' };
 }
 
 export function defaultTraits(species) {

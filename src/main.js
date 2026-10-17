@@ -19,6 +19,14 @@ const SAVE_KEY = 'ai-pet/v1';
 const PREFS_KEY = 'ai-pet/prefs';
 const speed = Number(new URLSearchParams(location.search).get('speed')) || 1;
 
+// The 3D view loads on demand; the 2D view is the fallback.
+let three = null; // the scene3d module, once loaded and if WebGL works
+let scene3d = null;
+let preview3d = null;
+const threeReady = import('./scene3d.js').then((m) => { three = m.supports3D() ? m : null; }).catch(() => { three = null; });
+const DOG_BREEDS = [{ id: 'shiba', name: 'Shiba Inu' }, { id: 'husky', name: 'Husky' }];
+const BREED_COLORS = { shiba: ['#d49a50', '#f5f2ec'], husky: ['#5b6068', '#f5f2ec'] };
+
 const $ = (id) => document.getElementById(id);
 
 const storage = {
@@ -71,7 +79,22 @@ function fitCanvas(canvas) {
 }
 
 // Pointer position in world units (the walk camera scrolls the view).
+function use3D() { return Boolean(three) && prefs.get('view', '3d') === '3d'; }
+
+// Show the WebGL canvas under the 2D one, or hide it.
+function setStack(gl, on) {
+  gl.hidden = !on;
+  gl.parentElement.classList.toggle('three', on);
+}
+
+function ensure3D() {
+  if (!three) return;
+  scene3d ??= new three.Scene3D($('scene3d'));
+  preview3d ??= new three.Scene3D($('preview3d'));
+}
+
 function toWorld(canvas, e, w) {
+  if (use3D() && scene3d && canvas === scene) return scene3d.pick(e.clientX, e.clientY);
   const r = canvas.getBoundingClientRect();
   return {
     x: ((e.clientX - r.left) / r.width) * VIEW_W + (w?.cam ?? 0),
@@ -137,7 +160,15 @@ function renderCreator() {
   const you = (key) => (v) => { d.owner[key] = v; updatePreview(); };
   $('pet-name').value = d.name;
   pressed($('species'), d.species);
-  $('ears-field').hidden = d.species === 'cat';
+  const solid = use3D();
+  $('ears-field').hidden = d.species === 'cat' || solid;
+  $('breed-field').hidden = d.species === 'cat' || !solid;
+  $('pattern').hidden = solid;
+  buildSegmented($('breed'), DOG_BREEDS, d.look.breed ?? 'shiba', (v) => {
+    d.look.breed = v;
+    [d.look.coat, d.look.marking] = BREED_COLORS[v];
+    renderCreator();
+  });
   buildSegmented($('size'), SIZES, d.look.size, look('size'));
   pressed($('ears'), d.look.ears);
   buildSwatches($('coat'), COAT_COLORS, d.look.coat, 'Coat', look('coat'));
@@ -189,6 +220,7 @@ function updatePreview() {
   Object.assign(preview.pet.traits, d.traits);
   Object.assign(preview.pet.owner, d.owner);
   preview.scale = petScale(preview.pet);
+  if (use3D()) { ensure3D(); preview3d.setPet(preview.pet); }
 }
 
 function openCreator(pet = null) {
@@ -234,6 +266,7 @@ $('creator-form').addEventListener('submit', (e) => {
     Object.assign(pet.owner, draft.owner);
     world.scale = petScale(pet);
     voice.setPet(pet);
+    scene3d?.setPet(pet);
     storage.save(pet);
     showHome();
     return;
@@ -254,6 +287,7 @@ function startGame(pet, away) {
   });
   voice.setPet(pet);
   loadVoices();
+  if (use3D()) { ensure3D(); scene3d.setPet(pet); }
   if (away) {
     world.greet();
     toast(away.text);
@@ -310,7 +344,10 @@ scene.addEventListener('pointerdown', (e) => {
   if (!world) return;
   voice.unlock();
   const p = toWorld(scene, e, world);
-  const hit = world.hitTest(p.x, p.y);
+  let hit = world.hitTest(p.x, p.y);
+  // In 3D, touching the models themselves counts, wherever they are drawn.
+  if (p.onPet && !['bag', 'jar', 'ball'].includes(hit)) hit = 'pet';
+  else if (p.onOwner && world.scene === 'home' && hit !== 'pet') hit = 'owner';
   scene.setPointerCapture(e.pointerId);
   pointer.samples = [];
   trackVelocity(p);
@@ -343,7 +380,7 @@ scene.addEventListener('pointermove', (e) => {
   if (pointer.mode === 'drag') { trackVelocity(p); world.dragTo(p.x, p.y); }
   else if (pointer.mode === 'pet') world.strokeTo(p.x, p.y);
   else if (pointer.mode === 'walk') world.setWalkInput(p.x >= world.owner.x ? 1 : -1);
-  else scene.style.cursor = CURSORS[world.hitTest(p.x, p.y)] ?? 'default';
+  else scene.style.cursor = p.onPet ? 'grab' : CURSORS[world.hitTest(p.x, p.y)] ?? 'default';
 });
 
 function endPointer() {
@@ -386,12 +423,24 @@ $('act-walk').addEventListener('click', () => {
 $('picker-close').addEventListener('click', () => { $('place-picker').hidden = true; });
 $('walk-home').addEventListener('click', walkHome);
 $('act-call').addEventListener('click', () => { voice.unlock(); world?.say(world.pet.name); });
+$('act-view').addEventListener('click', () => {
+  prefs.set('view', use3D() ? '2d' : '3d');
+  if (use3D()) { ensure3D(); scene3d.setPet(world.pet); }
+  renderPanel();
+});
+
 $('act-sound').addEventListener('click', () => {
   voice.unlock();
   voice.muted = !voice.muted;
   prefs.set('muted', voice.muted);
   renderSoundButton();
 });
+
+function renderViewButton() {
+  const b = $('act-view');
+  b.hidden = !three;
+  b.textContent = use3D() ? '2D view' : '3D view';
+}
 
 function renderSoundButton() {
   $('act-sound').setAttribute('aria-pressed', String(!voice.muted));
@@ -740,6 +789,7 @@ function renderPanel() {
   }
   $('hint').textContent = contextHint();
   renderSoundButton();
+  renderViewButton();
 
   $('needs').innerHTML = NEEDS.map((n) => {
     const v = pet.needs[n.id];
@@ -904,10 +954,16 @@ function frame(now) {
   const date = new Date();
   $('clock').textContent = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
+  const solid = use3D();
+  if (solid) ensure3D();
   if (!$('creator').hidden && preview) {
     preview.update(dt);
+    setStack($('preview3d'), solid);
     const ctx = fitCanvas($('preview'));
-    if (ctx) render(ctx, preview, { date });
+    if (solid) {
+      preview3d.render(preview, { date, dt });
+      if (ctx) preview3d.drawOverlay(ctx, preview);
+    } else if (ctx) render(ctx, preview, { date });
   } else if (world) {
     // Large speeds are for testing; step in small slices so behaviour stays stable.
     let left = dt * speed;
@@ -917,7 +973,12 @@ function frame(now) {
       left -= step;
     }
     const ctx = fitCanvas(scene);
-    if (ctx) render(ctx, world, { date, backdrops: backdrops(world), images: { treat: treatImage } });
+    const opts = { date, dt: dt * speed, backdrops: backdrops(world), images: { treat: treatImage } };
+    setStack($('scene3d'), solid);
+    if (solid) {
+      scene3d.render(world, opts);
+      if (ctx) scene3d.drawOverlay(ctx, world);
+    } else if (ctx) render(ctx, world, opts);
     $('status').textContent = world.status();
     panelTimer += dt;
     saveTimer += dt;
@@ -943,9 +1004,15 @@ window.addEventListener('pagehide', saveNow);
 
 // --- Boot ---
 
-const saved = storage.load();
-if (saved) startGame(saved, catchUp(saved));
-else openCreator();
+// ?debug exposes the simulation for testing in the browser console.
+if (new URLSearchParams(location.search).has('debug')) window.aiPet = { get world() { return world; }, get scene3d() { return scene3d; } };
+
+// Wait for the 3D module so the first frame uses the right view.
+threeReady.then(() => {
+  const saved = storage.load();
+  if (saved) startGame(saved, catchUp(saved));
+  else openCreator();
+});
 loadPlaces();
 loadAssets();
 requestAnimationFrame(frame);

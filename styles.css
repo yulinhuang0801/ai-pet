@@ -160,6 +160,13 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   gap: 8px;
 }
 
+/* In 3D mode the WebGL canvas sits underneath and the 2D canvas becomes a
+   transparent layer for speech bubbles, effects and pointer input. */
+.canvas-stack { position: relative; }
+.canvas-stack canvas.gl { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: var(--radius); }
+.canvas-stack.three #scene, .canvas-stack.three #preview { background: transparent; box-shadow: none; position: relative; }
+.canvas-stack.three canvas.gl { box-shadow: var(--shadow); background: #cbd6c3; }
+
 #preview, #scene {
   display: block;
   width: 100%;
@@ -419,6 +426,8 @@ label.small.file-button {
 .stats dt { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 .stats dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
 .manage { display: flex; flex-wrap: wrap; gap: 8px; }
+.credits { margin: 0; font-size: 0.78rem; color: var(--muted); }
+.credits a { color: inherit; }
 .confirm { display: grid; gap: 8px; padding-top: 6px; border-top: 1px solid var(--line); }
 .confirm p { margin: 0; font-size: 0.9rem; }
 

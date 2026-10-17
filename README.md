@@ -2,6 +2,14 @@
 
 A virtual cat or dog that behaves like a real one. It gets hungry, tired and bored on a real clock, has its own personality, and learns from how you treat it. No fur on the sofa, no chewed furniture (yet).
 
+## 3D view
+
+The app opens in 3D (three.js) with free animated models: a Shiba Inu or Husky, a cat, and you as a KayKit character. The same simulation drives both views, so everything below works in either; the button under the scene switches to the classic 2D view, which is also the fallback when WebGL isn't available.
+
+- The models come with animation libraries (the dogs: idle, walk, gallop, eat, sniff, jump, lie down; the owner: walk, throw, pick up, use item, crouch, wave, cheer, sit on the floor and more). The app picks the clip that matches what the pet or owner is doing.
+- Poses the libraries lack are made by turning bones on top of the animation: sitting, the play bow, shaking a paw, tail wagging, ears and a head tilt.
+- See `assets/CREDITS.md` for every model's source and licence. The cat is CC-BY 4.0 and must be credited.
+
 ## What you can do
 
 Everything happens with your hands in the scene. You appear there as a character you design yourself.
@@ -61,7 +69,10 @@ Keyboard shortcuts at home: F feeds, T gives a treat, B throws the ball, W start
 | `src/sound.js` | Synthesised barks and meows, plus custom voice clips |
 | `src/media-store.js` | Photos and voice clips in IndexedDB |
 | `src/pet-art.js` | Draws the cat or dog from its look and pose |
-| `src/renderer.js` | Draws the room, park, time of day, particles and speech bubbles |
+| `src/renderer.js` | The 2D view: room, park, time of day, particles and speech bubbles |
+| `src/scene3d.js` | The 3D view: models, animation choice, hand-made poses, leash, picking with the pointer |
+| `vendor/three/` | three.js, kept in the repo so the app needs no build step or CDN |
+| `assets/models/` | Free models and animation libraries (see `assets/CREDITS.md`) |
 | `src/main.js` | Page wiring: creator, hands-on controls, places, voice, side panel, main loop |
 
 ## Roadmap
@@ -71,5 +82,6 @@ Keyboard shortcuts at home: F feeds, T gives a treat, B throws the ball, W start
 - **Build your space**: arrange and decorate your room and add props to your places, a small, focused take on world-building.
 - **Understands speech, for free**: a small open-source model running in the browser (transformers.js) matches what you say to how a pet would react. No server and no API costs.
 - **Photo-matched looks**: describe your pet or upload a photo, and Claude sets the coat, markings and build for you.
-- **Realistic art style**: an alternative renderer using the same behaviour system.
+- **Realistic art style**: swap in paid realistic models (about $20 to $150 per breed) once the 3D version feels right.
+- **A cat with more animations**: the free cat only has a walk cycle.
 - **Mischief mode**: chewed slippers, shedding and knocked-over cups, if you want them.
