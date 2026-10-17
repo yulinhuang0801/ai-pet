@@ -29,11 +29,13 @@ The app is built in layers so the pet itself (its needs, personality, learning a
 | `bond.js` | Hearts, daily caps, bond levels, unlocks | No |
 | `finds.js` | What can be found on walks, the collection | No |
 | `commands.js` | Understanding what you type or say | No |
+| `route.js` | Map routes: length, kinds of place along them, landmarks | No |
 | `owner-look.js` | Your look options (hair, skin, clothes) | No, but 3D may add options |
 | `sound.js`, `media-store.js` | Voices, photos and clips | No |
 | `world.js` | The pet's behaviour: every activity, how it chooses, how it reacts to you | **No.** It asks the space instead of using coordinates |
 | `space-side.js` | Where things are and how they move in the side-on room | **Replaced** by a 3D space |
-| `renderer.js`, `pet-art.js`, `owner-art.js`, `finds-art.js` | 2D drawing | Kept for the 2D view; not used by 3D |
+| `renderer.js`, `pet-art.js`, `owner-art.js`, `finds-art.js`, `route-art.js` | 2D drawing | Kept for the 2D view; not used by 3D |
+| `map-planner.js` | The map where routes are planned | No; it only produces route data |
 | `scene3d.js` | 3D drawing (preview) | **Rewritten** around the 3D space and better assets |
 | `main.js` | Page wiring and pointer input | **Small changes:** pointer → 3D picking, and choosing the space |
 
@@ -54,7 +56,8 @@ The behaviour never touches coordinates. It asks the space. The full list is `SP
 | `dropTreat()`, `overBowl()` | 2D positions | 3D positions |
 | `hitTest()`, `reachFor()`, `walkOwnerTo()` | What the pointer is over; the owner walks to reach | Raycasting onto models and furniture |
 | `placeAtHome()`, `placeForWalk()`, `placeBackHome()` | Starting positions | Spawn points in the room or on the walk |
-| `walkedMeters()`, `spawnFind()`, `scheduleFind()`, `spawnCritter()` | Along the path | Along a route, which could come from a real map |
+| `walkedMeters()`, `spawnFind()`, `scheduleFind()`, `spawnCritter()` | Along the path | Along the route |
+| `routeMeters()`, `biomeHere()`, `landmarkAhead()` | Position along a real map route, the kind of place there, the next landmark | The same route data, laid out in 3D |
 | `moveOwner()`, `moveBody()`, `holdLeash()`, `moveBall()`, `moveFloorTreat()`, `moveParticles()` | One step of movement each frame | The same, in 3D |
 
 Distances the behaviour passes (`gap`, `dist`) are in pet-sized units: the space multiplies them by the pet's scale. Each space can then use its own units (view units here, metres in 3D) without the behaviour caring.

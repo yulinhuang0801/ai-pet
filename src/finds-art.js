@@ -85,6 +85,22 @@ export function drawFind(ctx, id, x, y, s = 1) {
       ctx.lineTo(5, -9);
       ctx.stroke();
       break;
+    case 'shell':
+      ctx.fillStyle = '#f2d4c4';
+      ctx.beginPath();
+      ctx.moveTo(0, 8);
+      ctx.arc(0, 2, 9, Math.PI * 1.05, Math.PI * 1.95);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#c99a86';
+      ctx.lineWidth = 1.2;
+      for (const a of [-0.9, -0.45, 0, 0.45, 0.9]) {
+        ctx.beginPath();
+        ctx.moveTo(0, 8);
+        ctx.lineTo(Math.sin(a) * 9, 2 - Math.cos(a) * 9);
+        ctx.stroke();
+      }
+      break;
     case 'tennis':
       circle(0, 0, 8, '#c9df3a');
       ctx.strokeStyle = '#f4f7e8';

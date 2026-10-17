@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Grandstander:wght@600;700&display=swap">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="styles.css">
 
 </head>
@@ -152,6 +153,37 @@
         <ul class="place-grid" id="picker-places"></ul>
       </div>
 
+      <section class="map-panel" id="map-panel" hidden aria-labelledby="map-title">
+        <div class="picker-head">
+          <h3 id="map-title">Plan a walk on the map</h3>
+          <button type="button" class="ghost" id="map-close">Close</button>
+        </div>
+        <form class="map-search" id="map-search">
+          <label for="map-query" class="sr-only">Search for a place</label>
+          <input id="map-query" autocomplete="off" placeholder="Search for a park, street or town">
+          <button type="submit">Search</button>
+          <button type="button" class="ghost" id="map-locate">Near me</button>
+        </form>
+        <ul class="map-results" id="map-results"></ul>
+        <p class="map-notice" id="map-notice" hidden></p>
+        <div class="map" id="map"></div>
+        <div class="map-tools">
+          <span id="map-distance"></span>
+          <button type="button" class="ghost small" id="map-undo">Undo point</button>
+          <button type="button" class="ghost small" id="map-clear">Clear</button>
+          <button type="button" class="primary" id="map-build">Build this walk</button>
+        </div>
+        <div class="map-result" id="map-result" hidden>
+          <p id="map-summary"></p>
+          <div class="biome-strip" id="map-strip" aria-hidden="true"></div>
+          <div class="map-save">
+            <label for="map-name" class="sr-only">Name this walk</label>
+            <input id="map-name" autocomplete="off" maxlength="40">
+            <button type="button" class="primary" id="map-save">Save and walk</button>
+          </div>
+        </div>
+      </section>
+
       <p class="hint" id="hint"></p>
 
       <form class="talk" id="talk">
@@ -222,12 +254,15 @@
 
       <section class="card">
         <h3>Your places</h3>
-        <p class="help">Add a photo of your street, your park or your living room, then walk <span class="pet-name"></span> there or make it home.</p>
+        <p class="help">Plan a walk on a real map, or add a photo of anywhere at all, then walk <span class="pet-name"></span> there. Photos can also be home.</p>
         <ul class="place-list" id="places"></ul>
-        <label class="file-button">
-          <input type="file" id="place-file" accept="image/*">
-          <span>Add a photo</span>
-        </label>
+        <div class="manage">
+          <button type="button" id="plan-route">Plan a route on the map</button>
+          <label class="file-button">
+            <input type="file" id="place-file" accept="image/*">
+            <span>Add a photo</span>
+          </label>
+        </div>
       </section>
 
       <section class="card">

@@ -16,6 +16,7 @@ import { render } from './renderer.js';
 import { SKIN_TONES, HAIR_COLORS, HAIR_STYLES, TOP_COLORS, BOTTOM_COLORS, defaultOwner } from './owner-look.js';
 import { Voice, VOICE_SLOTS } from './sound.js';
 import { MediaStore, photoToBlob, blobToImage } from './media-store.js';
+import { RoutePlanner, routeThumbnail } from './map-planner.js';
 
 const SAVE_KEY = 'ai-pet/v1';
 const PREFS_KEY = 'ai-pet/prefs';
@@ -542,18 +543,28 @@ if (Recognition) {
 
 async function loadPlaces() {
   const rows = await media.all('places');
-  places = await Promise.all(rows.map(async (r) => ({ ...r, image: await blobToImage(r.blob).catch(() => null) })));
+  places = await Promise.all(rows.map(async (r) => ({ ...r, image: r.blob ? await blobToImage(r.blob).catch(() => null) : null })));
   places.sort((a, b) => a.added - b.added);
   if (!$('home').hidden) { renderPlaces(); renderPicker(); }
 }
 
+// Places are photos, saved map routes, or the built-in room and park.
+const placeKind = (p) => (p.kind === 'route' ? 'route' : p.builtIn ? (p.id === 'park' ? 'park' : 'room') : 'photo');
+const routeThumbs = new Map();
+
 function placeThumb(p) {
   if (p.image) return `<img src="${p.image.src}" alt="">`;
+  if (p.kind === 'route') {
+    if (!routeThumbs.has(p.id)) routeThumbs.set(p.id, routeThumbnail(p.route));
+    return `<img src="${routeThumbs.get(p.id)}" alt="">`;
+  }
   return `<span class="thumb-art ${p.id}"></span>`;
 }
 
+const walkPlace = (p) => ({ id: p.id, kind: placeKind(p), name: p.name, route: p.route });
+
 function renderPicker() {
-  const list = [{ id: 'park', kind: 'park', name: 'The park' }, ...places.map((p) => ({ ...p, kind: 'photo' }))];
+  const list = [{ id: 'park', name: 'The park', builtIn: true }, ...places];
   const ul = $('picker-places');
   ul.replaceChildren(...list.map((p) => {
     const li = document.createElement('li');
@@ -561,10 +572,14 @@ function renderPicker() {
     b.type = 'button';
     b.className = 'place-tile';
     b.innerHTML = `${placeThumb(p)}<span>${escapeHtml(p.name)}</span>`;
-    b.onclick = () => startWalkAt({ id: p.id, kind: p.kind, name: p.name });
+    b.onclick = () => startWalkAt(walkPlace(p));
     li.append(b);
     return li;
   }));
+  const plan = document.createElement('li');
+  plan.innerHTML = `<button type="button" class="place-tile add"><span class="thumb-art plus" aria-hidden="true">+</span><span>Plan a route on the map</span></button>`;
+  plan.querySelector('button').onclick = () => openPlanner();
+  ul.append(plan);
   const add = document.createElement('li');
   add.innerHTML = `<label class="place-tile add"><input type="file" accept="image/*" class="sr-only"><span class="thumb-art plus" aria-hidden="true">+</span><span>Your own photo</span></label>`;
   add.querySelector('input').addEventListener('change', async (e) => {
@@ -593,6 +608,34 @@ async function addPlace(file) {
   }
 }
 
+// --- Map routes ---
+
+const planner = new RoutePlanner({
+  panel: $('map-panel'), map: $('map'), search: $('map-search'), query: $('map-query'), results: $('map-results'),
+  locate: $('map-locate'), notice: $('map-notice'), distance: $('map-distance'), undo: $('map-undo'),
+  clear: $('map-clear'), build: $('map-build'), result: $('map-result'), summary: $('map-summary'),
+  strip: $('map-strip'), name: $('map-name'), save: $('map-save'),
+}, {
+  toast,
+  onSave: async ({ name, route }) => {
+    const record = { id: `r${Date.now().toString(36)}`, name, kind: 'route', route, added: Date.now() };
+    await media.put('places', record);
+    places.push(record);
+    renderPlaces();
+    renderPicker();
+    startWalkAt(walkPlace(record));
+  },
+});
+
+function openPlanner() {
+  $('place-picker').hidden = true;
+  planner.open();
+  $('map-panel').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+$('map-close').addEventListener('click', () => planner.close());
+$('plan-route').addEventListener('click', () => openPlanner());
+
 $('place-file').addEventListener('change', async (e) => {
   await addPlace(e.target.files[0]);
   e.target.value = '';
@@ -607,7 +650,9 @@ function renderPlaces() {
     const li = document.createElement('li');
     li.className = 'place-row';
     const isHome = world.pet.home === p.id || (p.id === 'room' && !world.pet.home);
-    li.innerHTML = `${placeThumb(p)}<div class="place-info"><input class="place-name" value="${escapeHtml(p.name)}" ${p.builtIn ? 'disabled' : ''} aria-label="Place name"><span class="meta">${isHome ? 'Home' : p.walkOnly ? 'For walks' : ''}</span></div><div class="place-actions"></div>`;
+    const route = p.kind === 'route';
+    const meta = isHome ? 'Home' : route ? `Map route · ${p.route.length >= 1000 ? `${(p.route.length / 1000).toFixed(1)} km` : `${p.route.length} m`}` : p.walkOnly ? 'For walks' : '';
+    li.innerHTML = `${placeThumb(p)}<div class="place-info"><input class="place-name" value="${escapeHtml(p.name)}" ${p.builtIn ? 'disabled' : ''} aria-label="Place name"><span class="meta">${meta}</span></div><div class="place-actions"></div>`;
     const actions = li.querySelector('.place-actions');
     const btn = (label, fn, cls = 'ghost') => {
       const b = document.createElement('button');
@@ -617,8 +662,8 @@ function renderPlaces() {
       b.onclick = fn;
       actions.append(b);
     };
-    if (p.id !== 'room') btn('Walk here', () => startWalkAt({ id: p.id, kind: p.builtIn ? 'park' : 'photo', name: p.name }));
-    if (!p.walkOnly && !isHome) btn('Make home', () => { world.pet.home = p.id; storage.save(world.pet); renderPlaces(); });
+    if (p.id !== 'room') btn('Walk here', () => startWalkAt(walkPlace(p)));
+    if (!p.walkOnly && !route && !isHome) btn('Make home', () => { world.pet.home = p.id; storage.save(world.pet); renderPlaces(); });
     if (!p.builtIn) {
       btn('Remove', async () => {
         await media.remove('places', p.id);
@@ -629,7 +674,8 @@ function renderPlaces() {
       }, 'ghost danger');
       li.querySelector('.place-name').addEventListener('change', async (e) => {
         p.name = e.target.value.trim() || p.name;
-        await media.put('places', { id: p.id, name: p.name, blob: p.blob, added: p.added });
+        const { image, ...record } = p;
+        await media.put('places', record);
       });
     }
     return li;
@@ -788,7 +834,10 @@ function renderPanel() {
   $('walk-actions').hidden = !walking;
   if (walking) {
     $('place-picker').hidden = true;
-    $('walk-stat').textContent = `${Math.round(world.walkedMeters())} m · ${world.walk.place.name ?? 'The park'}`;
+    const route = world.walk.route;
+    $('walk-stat').textContent = route
+      ? `${Math.round(world.routeMeters(world.owner.x))} of ${route.length} m · ${world.walk.place.name}`
+      : `${Math.round(world.walkedMeters())} m · ${world.walk.place.name ?? 'The park'}`;
   }
   $('hint').textContent = contextHint();
   renderSoundButton();

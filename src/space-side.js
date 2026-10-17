@@ -13,6 +13,7 @@
 
 import { shoulderPoint, OWNER } from './owner-art.js';
 import { pickFind } from './finds.js';
+import { biomeAt } from './route.js';
 
 export const VIEW_W = 800;
 export const VIEW_H = 450;
@@ -59,6 +60,8 @@ export const sideSpace = {
 
   placeForWalk() {
     Object.assign(this.owner, { x: 260, dir: 1, vx: 0, targetX: null, walkInput: 0, hand: null });
+    // A route starts where the owner stands and runs to the right.
+    this.walk.startX = this.owner.x;
     this.body.x = 350;
     this.body.vx = 0;
     this.cam = 0;
@@ -309,10 +312,32 @@ export const sideSpace = {
 
   walkedMeters() { return this.walk.distance / UNITS_PER_METER; },
 
+  // How far along a real route the pet is, in metres.
+  routeMeters(x = this.body.x) {
+    return Math.max(0, (x - this.walk.startX) / UNITS_PER_METER);
+  },
+
+  // What kind of place the pet is in: park, woods, water, beach, street, town.
+  biomeHere() {
+    const w = this.walk;
+    if (w?.route) return biomeAt(w.route, this.routeMeters());
+    return w?.place.kind === 'park' ? 'park' : 'any';
+  },
+
+  // The next landmark just ahead on a real route that the pet hasn't checked
+  // out yet, with where it stands.
+  landmarkAhead() {
+    const w = this.walk;
+    if (!w?.route) return null;
+    const here = this.routeMeters();
+    const lm = w.route.landmarks.find((l) => !w.visited.has(l.d) && l.d > here - 2 && l.d < here + 10);
+    return lm ? { ...lm, x: w.startX + lm.d * UNITS_PER_METER } : null;
+  },
+
   // Something to find, placed on the path ahead.
   spawnFind() {
     const o = this.owner;
-    this.walk.find = { x: o.x + (o.walkInput || o.dir) * 360, item: pickFind(this.pet.species, this.rng) };
+    this.walk.find = { x: o.x + (o.walkInput || o.dir) * 360, item: pickFind(this.pet.species, this.rng, this.biomeHere()) };
   },
 
   scheduleFind(minMeters, maxMeters) {
@@ -321,7 +346,8 @@ export const sideSpace = {
 
   // A squirrel (or, for cats, a bird) appears ahead.
   spawnCritter(ahead) {
-    this.walk.critter = { x: this.owner.x + ahead * 380, dir: ahead, kind: this.pet.species === 'dog' ? 'squirrel' : 'bird', t: 0 };
+    const leafy = ['park', 'woods', 'any'].includes(this.biomeHere());
+    this.walk.critter = { x: this.owner.x + ahead * 380, dir: ahead, kind: this.pet.species === 'dog' && leafy ? 'squirrel' : 'bird', t: 0 };
   },
 
   // --- Simulation steps ---
@@ -350,6 +376,16 @@ export const sideSpace = {
     } else o.vx = 0;
     o.x += o.vx * dt;
     if (this.scene === 'home') o.x = clampX(o.x);
+    const route = this.walk?.route;
+    if (route) {
+      // A real route has a start and an end.
+      const end = this.walk.startX + route.length * UNITS_PER_METER;
+      o.x = Math.min(end, Math.max(this.walk.startX, o.x));
+      if (!this.walk.arrived && o.x >= end - 1) {
+        this.walk.arrived = true;
+        this.reachedRouteEnd();
+      }
+    }
     o.speed = Math.abs(o.vx);
     o.phase += dt * o.speed / 22;
     if (o.speed > 5) o.lastMoved = this.time;

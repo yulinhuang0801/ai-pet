@@ -21,6 +21,7 @@ Everything happens with your hands in the scene. You appear there as a character
 - **Play catch**: grab the ball and fling it. Throws follow real physics: gravity, bounces, walls and rolling. A keen dog play-bows while you hold the ball and may catch it mid-air. Cats mostly don't fetch.
 - **Pet**: press and hold on your pet. Stroking it feels better than a still hand. Cats have a limit and will tell you when you reach it.
 - **Walk**: pick a place, then hold on either side of yourself (or use the arrow keys) to walk. The leash sags and pulls tight. Your pet stops to sniff until you tug, lunges at squirrels and drags you along, and cats often flop down in protest.
+- **Walk real routes**: plan a walk on a real map (OpenStreetMap). Search for a place, click out your route, and the app builds the walk from what's really there: park, woods, waterside, beach, streets or shops, with real benches, cafés, fountains, playgrounds and dog parks where they actually are. The walk is as long as the route, your pet checks out the landmarks on the way, and the finds suit the place (seashells only near water). Saved routes work offline afterwards.
 - **Your own places**: upload any photo, whether your street, your park or something sillier, and walk your pet there or make it your home backdrop. Nothing is refused: it's your space.
 - **Make it yours**: use your own picture as the treat, and change your look by clicking yourself in the scene.
 - **Bond hearts**: walks, play, meals, cuddles and training each earn a few hearts a day, up to 10. Hearts raise your bond level (Getting to know you, Warming up, Friends, Good friends, Best friends, Inseparable), and each level unlocks something: harder tricks, gifts, off-leash walks, naps at your feet, a golden tag.
@@ -41,6 +42,8 @@ Everything happens with your hands in the scene. You appear there as a character
 - **Day and night** follow your clock. The window shows the real sky, the lamp comes on in the evening, and pets sleep more at night.
 
 ## Running it
+
+**Map walks need the app on its own website.** The claude.ai preview blocks outside sites, so map pictures, place search and map data can't load there. Everything else works in the preview. To host it for free with GitHub Pages: in the repository on GitHub, go to **Settings → Pages**, set **Source** to **Deploy from a branch**, pick **main** and **/ (root)**, and save. A minute later it's at `https://<your-username>.github.io/ai-pet/`.
 
 It's a static site with no build step:
 
@@ -64,6 +67,10 @@ Keyboard shortcuts at home: F feeds, T gives a treat, B throws the ball, W start
 | `src/bond.js` | Hearts, daily caps, bond levels and unlocks |
 | `src/finds.js` | Things to find on walks, and the collection |
 | `src/finds-art.js` | Drawings of finds |
+| `src/route.js` | Map routes: length, what kind of place each stretch is, landmarks along it (pure, tested offline) |
+| `src/route-art.js` | Draws a walk along a real route in 2D |
+| `src/map-planner.js` | The map: search, click out a route, fetch OpenStreetMap data, save the walk |
+| `vendor/leaflet/` | Leaflet, the map library |
 | `src/commands.js` | Turns what you type or say into name, cue, topic and tone |
 | `src/world.js` | The pet's behaviour: activities, decision making, reactions to you. No coordinates; it asks the space |
 | `src/space-side.js` | The side-on space: positions, movement, ball physics, the leash, hit tests |
@@ -80,7 +87,6 @@ Keyboard shortcuts at home: F feeds, T gives a treat, B throws the ball, W start
 
 ## Roadmap
 
-- **Pick a place on a map**: search for a park or street, draw a route, and walk a scene built from what is really there (OpenStreetMap).
 - **Walk together (opt-in)**: if your routes cross with another walker's, you can see each other on the map. Off by default.
 - **Build your space**: arrange and decorate your room and add props to your places, a small, focused take on world-building.
 - **Understands speech, for free**: a small open-source model running in the browser (transformers.js) matches what you say to how a pet would react. No server and no API costs.

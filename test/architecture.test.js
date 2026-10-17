@@ -10,7 +10,7 @@ import { sideSpace } from '../src/space-side.js';
 const read = (f) => readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8');
 const imports = (src) => [...src.matchAll(/from '\.\/([^']+)'/g)].map((m) => m[1]);
 
-const CORE = ['pet.js', 'learning.js', 'bond.js', 'finds.js', 'commands.js', 'owner-look.js'];
+const CORE = ['pet.js', 'learning.js', 'bond.js', 'finds.js', 'commands.js', 'owner-look.js', 'route.js'];
 const VIEW_ONLY = ['renderer.js', 'pet-art.js', 'owner-art.js', 'finds-art.js', 'scene3d.js', 'space-side.js', 'main.js'];
 
 test('core modules depend only on other core modules', () => {

@@ -18,6 +18,7 @@ import {
 import { earn, addHearts, unlocked, today } from './bond.js';
 import { pickFind, collect, findById } from './finds.js';
 import { parseUtterance } from './commands.js';
+import { LANDMARKS } from './route.js';
 import { sideSpace } from './space-side.js';
 
 const POSES = {
@@ -62,7 +63,7 @@ export const SPACE_CONTRACT = [
   // the owner's hands
   'hitTest', 'reachFor', 'walkOwnerTo',
   // walks
-  'walkedMeters', 'spawnFind', 'scheduleFind', 'spawnCritter',
+  'walkedMeters', 'spawnFind', 'scheduleFind', 'spawnCritter', 'routeMeters', 'biomeHere', 'landmarkAhead',
   // each step
   'moveOwner', 'holdLeash', 'moveBody', 'moveBall', 'moveFloorTreat', 'moveParticles',
 ];
@@ -517,6 +518,7 @@ const ACTS = {
       squirrel: w.pet.species === 'dog' ? `${w.pet.name} spotted a squirrel!` : `${w.pet.name} is stalking a bird.`,
       flop: `${w.pet.name} flopped down and refuses to move.`,
       found: `${w.pet.name} is sniffing out something.`,
+      visit: a.landmark ? visitLabel(w.pet.name, a.landmark) : `${w.pet.name} is exploring.`,
       tired: `${w.pet.name} is tired. Time to head home?`,
     })[a.phase],
     enter(w, a) {
@@ -536,6 +538,11 @@ const ACTS = {
       if (a.phase !== 'tired' && p.needs.energy < 12) w.setLeash(a, 'tired', 999);
       const f = w.walk.find;
       if (f && (a.phase === 'walk' || a.phase === 'wait') && w.near(f, 185)) w.setLeash(a, 'found');
+      // Landmarks on a real route get checked out on the way past.
+      if (a.phase === 'walk' && moving) {
+        const lm = w.landmarkAhead();
+        if (lm) { w.walk.visited.add(lm.d); a.landmark = lm; w.setLeash(a, 'visit'); }
+      }
       const ahead = moving ? o.walkInput : w.sideOfOwner();
       const tight = w.walk.tension > 0.85;
 
@@ -587,6 +594,19 @@ const ACTS = {
           }
           break;
         }
+        case 'visit': {
+          const lm = a.landmark;
+          if (a.sniffFrom === undefined) {
+            if (w.approach(lm, 40, 'trot') || a.t > 4) {
+              a.sniffFrom = a.t;
+              w.reactToLandmark(lm);
+            }
+          } else {
+            w.stop();
+            if (a.t - a.sniffFrom > 2.6) w.setLeash(a, 'walk');
+          }
+          break;
+        }
         case 'flop':
           w.stop();
           if (a.t > a.until) w.setLeash(a, w.chance(0.6) ? 'walk' : 'flop', w.rand(3, 6));
@@ -599,7 +619,24 @@ const ACTS = {
   },
 };
 
+// What the status line says while the pet checks out a landmark.
+function visitLabel(name, lm) {
+  const place = lm.name ? `${LANDMARKS[lm.kind].label.replace(/^an? /, 'the ')} (${lm.name})` : LANDMARKS[lm.kind].label;
+  return {
+    dog_park: `${name} is thrilled about the dog park!`,
+    playground: `${name} is watching the playground.`,
+    cafe: `${name} is hoping for crumbs at ${place}.`,
+    restaurant: `${name} is sniffing the air outside ${place}.`,
+    ice_cream: `${name} is staring at ${place}.`,
+    fountain: `${name} is checking out ${place}.`,
+    drinking_water: `${name} is having a drink.`,
+    bench: `${name} is sniffing around ${place}.`,
+    shop: `${name} is peering into ${place}.`,
+  }[lm.kind] ?? `${name} is exploring.`;
+}
+
 const LEASH_POSES = {
+  visit: ['sniff', {}],
   found: ['stand', { ears: 1, wag: 0.9, head: 0.35 }],
   walk: ['stand', { wag: 0.6, ears: 0.7, tailUp: 0.75 }],
   wait: ['sit', { wag: 0.4, ears: 0.8 }],
@@ -1085,6 +1122,7 @@ export class World {
     this.walk = {
       place, distance: 0, startedAt: this.time, critter: null, tension: 0,
       find: null, nextFindAt: 0, offLeash: false,
+      route: place.route ?? null, visited: new Set(), arrived: false,
     };
     this.scheduleFind(70, 140);
     this.placeForWalk();
@@ -1111,6 +1149,37 @@ export class World {
     this.placeBackHome();
     this.start('idle');
     return { meters, minutes };
+  }
+
+  // How the pet takes in a landmark on a real route.
+  reactToLandmark(lm) {
+    const p = this.pet;
+    if (lm.kind === 'dog_park') {
+      this.setPose('happy');
+      this.vocal('excited', 1.2);
+      this.hop();
+      addNeeds(p, { fun: 6 });
+    } else if (lm.kind === 'drinking_water' || lm.kind === 'fountain') {
+      this.setPose('eat');
+      addNeeds(p, { energy: 2 });
+    } else if (['cafe', 'restaurant', 'ice_cream'].includes(lm.kind)) {
+      this.setPose('sit', { tilt: -0.4, ears: 0.9 });
+      if (p.species === 'dog') this.vocal('beg', 1.2);
+    } else if (lm.kind === 'bench' || lm.kind === 'playground') {
+      this.setPose('sit', { ears: 0.8 });
+    } else this.setPose('sniff');
+    addNeeds(p, { fun: 2 });
+  }
+
+  // The owner reached the end of a real route.
+  reachedRouteEnd() {
+    const w = this.walk;
+    const name = w.place.name ?? 'your route';
+    addNeeds(this.pet, { fun: 6, affection: 3 });
+    this.vocal('happy', 1.4);
+    const note = this.milestone(`route:${w.place.id}`, `Walked all of ${name} together (${w.route.length} m).`);
+    if (note) this.onNote(note);
+    else this.onToast(`You made it to the end of ${name}.`);
   }
 
   greet() {

@@ -9,6 +9,7 @@ import {
 import { portionGrams } from './pet.js';
 import { drawFind } from './finds-art.js';
 import { unlocked } from './bond.js';
+import { drawRouteScene } from './route-art.js';
 
 // 0 = full day, 1 = full night, from the local clock.
 export function darkness(date) {
@@ -33,7 +34,7 @@ export function skyColors(dark) {
   return [mix('#f0a36b', '#141c3a', t), mix('#f6d38f', '#2e3560', t)];
 }
 
-function drawSky(ctx, x, y, w, h, dark, time) {
+export function drawSky(ctx, x, y, w, h, dark, time) {
   const [top, bottom] = skyColors(dark);
   const g = ctx.createLinearGradient(0, y, 0, y + h);
   g.addColorStop(0, top);
@@ -525,6 +526,7 @@ export function render(ctx, world, { date = new Date(), time = world.time, backd
   const photo = home ? backdrops.home : backdrops.walk;
   if (photo) drawPhoto(ctx, photo, world.cam, !home);
   else if (home) drawRoom(ctx, world, dark, time);
+  else if (world.walk.route) drawRouteScene(ctx, world, dark, time);
   else drawPark(ctx, world, dark, time);
 
   ctx.save();
