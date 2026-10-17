@@ -1,0 +1,11 @@
+{
+  "name": "ai-pet",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A virtual cat or dog that behaves like a real one and learns from you.",
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "test": "node --test"
+  }
+}

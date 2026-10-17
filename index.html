@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AI Pet</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="A virtual cat or dog that behaves like a real one and learns from you.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Grandstander:wght@600;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <span class="brand">AI Pet</span>
+    <span class="clock" id="clock"></span>
+  </header>
+
+  <section class="creator" id="creator" hidden>
+    <div class="creator-preview">
+      <canvas id="preview" aria-label="Preview of your pet"></canvas>
+      <p class="preview-note" id="preview-note"></p>
+    </div>
+    <form class="creator-form" id="creator-form" novalidate>
+      <h1 id="creator-title">Meet your new pet</h1>
+
+      <div class="field">
+        <label for="pet-name">Name</label>
+        <input id="pet-name" name="name" maxlength="20" autocomplete="off" placeholder="Mochi">
+      </div>
+
+      <fieldset class="field">
+        <legend>Species</legend>
+        <div class="segmented" id="species">
+          <button type="button" data-value="dog">Dog</button>
+          <button type="button" data-value="cat">Cat</button>
+        </div>
+      </fieldset>
+
+      <div class="field-row">
+        <fieldset class="field">
+          <legend>Size</legend>
+          <div class="segmented" id="size"></div>
+        </fieldset>
+        <fieldset class="field" id="ears-field">
+          <legend>Ears</legend>
+          <div class="segmented" id="ears">
+            <button type="button" data-value="floppy">Floppy</button>
+            <button type="button" data-value="pointy">Pointy</button>
+          </div>
+        </fieldset>
+      </div>
+
+      <fieldset class="field">
+        <legend>Coat</legend>
+        <div class="swatches" id="coat"></div>
+      </fieldset>
+      <fieldset class="field">
+        <legend>Markings</legend>
+        <div class="segmented wrap" id="pattern"></div>
+        <div class="swatches" id="marking"></div>
+      </fieldset>
+      <div class="field-row">
+        <fieldset class="field">
+          <legend>Eyes</legend>
+          <div class="swatches" id="eyes"></div>
+        </fieldset>
+        <fieldset class="field">
+          <legend>Collar</legend>
+          <div class="swatches" id="collar"></div>
+        </fieldset>
+      </div>
+
+      <fieldset class="field">
+        <legend>Personality</legend>
+        <div class="traits" id="traits"></div>
+      </fieldset>
+
+      <div class="creator-actions">
+        <button type="submit" class="primary" id="adopt">Bring them home</button>
+        <button type="button" class="ghost" id="cancel-edit" hidden>Cancel</button>
+      </div>
+    </form>
+  </section>
+
+  <main class="home" id="home" hidden>
+    <div class="play">
+      <div class="stage">
+        <canvas id="scene" aria-label="Your pet's room"></canvas>
+        <p class="status" id="status" aria-live="polite"></p>
+        <div class="toasts" id="toasts" aria-live="polite"></div>
+      </div>
+
+      <div class="actions" role="toolbar" aria-label="Things to do">
+        <button type="button" id="act-feed"><span class="key">F</span>Feed</button>
+        <button type="button" id="act-treat"><span class="key">T</span>Treat</button>
+        <button type="button" id="act-ball"><span class="key">B</span>Throw ball</button>
+        <button type="button" id="act-walk"><span class="key">W</span><span id="walk-label">Go for a walk</span></button>
+        <button type="button" id="act-call"><span class="key">C</span><span id="call-label">Call</span></button>
+      </div>
+      <p class="hint">Press and hold on your pet to pet them. Tap the floor to throw the ball there.</p>
+
+      <form class="talk" id="talk">
+        <label for="talk-input" class="sr-only">Say something to your pet</label>
+        <input id="talk-input" autocomplete="off" placeholder="Say something… try “sit”, “good girl!” or “want a walk?”">
+        <button type="button" class="mic" id="mic" hidden aria-label="Speak">Mic</button>
+        <button type="submit" class="primary">Say</button>
+      </form>
+    </div>
+
+    <aside class="panel">
+      <section class="card pet-card">
+        <div class="pet-head">
+          <h2 id="pet-name-label"></h2>
+          <span class="chip" id="mood"></span>
+        </div>
+        <p class="meta" id="pet-meta"></p>
+        <div class="bond">
+          <div class="bond-row"><span>Bond</span><span id="bond-label"></span></div>
+          <div class="bar"><i id="bond-bar"></i></div>
+        </div>
+        <div class="needs" id="needs"></div>
+        <p class="meta" id="bowl"></p>
+      </section>
+
+      <section class="card">
+        <h3>What they've learned</h3>
+        <p class="help">Give a cue like “sit”, then reward with a treat, “good boy!” or a pat right away. Rewards also count when they sit or lie down on their own.</p>
+        <ul class="skills" id="tricks"></ul>
+        <h4>Words they know</h4>
+        <ul class="words" id="words"></ul>
+        <ul class="facts" id="facts"></ul>
+      </section>
+
+      <section class="card">
+        <h3>Journal</h3>
+        <ol class="journal" id="journal"></ol>
+      </section>
+
+      <section class="card stats-card">
+        <dl class="stats" id="stats"></dl>
+        <div class="manage">
+          <button type="button" class="ghost" id="edit-pet">Edit look &amp; personality</button>
+          <button type="button" class="ghost danger" id="reset">Start over</button>
+        </div>
+        <div class="confirm" id="reset-confirm" hidden>
+          <p id="reset-text"></p>
+          <div class="manage">
+            <button type="button" class="danger-solid" id="reset-yes">Yes, start over</button>
+            <button type="button" class="ghost" id="reset-no">Keep my pet</button>
+          </div>
+        </div>
+      </section>
+    </aside>
+  </main>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
