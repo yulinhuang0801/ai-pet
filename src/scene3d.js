@@ -33,8 +33,20 @@ const Z_PROPS = -0.35;
 
 const loader = new GLTFLoader();
 const cache = new Map();
+// Hosts that can't serve .glb files get each model packed as base64 in a
+// .glb.json file instead; a page opts in with <meta name="ai-pet:packed-models">.
+const packed = typeof document !== 'undefined' && Boolean(document.querySelector('meta[name="ai-pet:packed-models"]'));
+
+async function loadPacked(file) {
+  const res = await fetch(`${ASSETS}${file}.json`);
+  if (!res.ok) throw new Error(`Could not load ${file}`);
+  const { glb } = await res.json();
+  const bytes = Uint8Array.from(atob(glb), (c) => c.charCodeAt(0));
+  return loader.parseAsync(bytes.buffer, '');
+}
+
 function load(file) {
-  if (!cache.has(file)) cache.set(file, loader.loadAsync(ASSETS + file));
+  if (!cache.has(file)) cache.set(file, packed ? loadPacked(file) : loader.loadAsync(ASSETS + file));
   return cache.get(file);
 }
 
