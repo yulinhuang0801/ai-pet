@@ -1,5 +1,6 @@
-// The simulation: where the pet is, what it is doing, and how it reacts to
-// the owner. Everything here is plain data the renderer draws each frame.
+// The simulation: where the pet and its owner are, what the pet is doing,
+// and how it reacts to what the owner does with their hands. Everything here
+// is plain data that the renderer draws each frame.
 
 import {
   tickNeeds, addNeeds, addBond, portionGrams, sizeScale, mood, addJournal,
@@ -9,19 +10,26 @@ import {
   noteHabit, bondMilestone, TRICKS,
 } from './learning.js';
 import { parseUtterance } from './commands.js';
+import { shoulderPoint, OWNER } from './owner.js';
 
 export const VIEW_W = 800;
 export const VIEW_H = 450;
 export const GROUND = 392;
-export const BOWL_X = 108;
+export const BAG_X = 38;
+export const JAR_X = 88;
+export const BOWL_X = 150;
 export const BED_X = 688;
-export const FRONT_X = 400;
 export const BALL_R = 9;
 export const UNITS_PER_METER = 45;
-const MIN_X = 70;
-const MAX_X = 730;
+export const LEASH = 170;
+export const GRAVITY = 980;
+const MIN_X = 60;
+const MAX_X = 745;
+const ARM_REACH = OWNER.upperArm + OWNER.forearm - 6;
 
-const GAITS = { walk: 55, trot: 105, run: 200 };
+const GAITS = { walk: 55, trot: 105, run: 210 };
+const OWNER_SPEED = 130;
+const OWNER_WALK_SPEED = 95;
 
 const POSES = {
   stand: { sit: 0, lie: 0, head: 0, eyes: 0, mouth: 0, ears: 0.55, tailUp: 0.55, wag: 0.15, paw: 0, tilt: 0, groom: 0, chew: 0, crouch: 0 },
@@ -35,9 +43,11 @@ const POSES = {
   sad: { ears: 0.05, tailUp: 0.05, wag: 0, head: 0.3 },
   alert: { ears: 1, tailUp: 0.85, wag: 0.1 },
   crouch: { crouch: 1, ears: 1, tailUp: 0.35, wag: 0.5, head: 0.2 },
+  playBow: { crouch: 0.75, ears: 1, tailUp: 0.95, wag: 1, mouth: 0.5 },
+  beg: { tilt: -0.35, ears: 0.9, wag: 0.8, mouth: 0.3 },
 };
 
-const SOUNDS = {
+export const VOICE_LINES = {
   dog: { happy: 'Woof!', excited: 'Arf arf!', beg: 'Hnnn…', alert: 'WOOF!', greet: 'Arf!', yawn: 'Yawn…', content: 'Hmf.' },
   cat: { happy: 'Mrrp!', excited: 'Mrrrow!', beg: 'Meow?', alert: '…', greet: 'Mrrp?', yawn: 'Yawn…', content: 'Prrr…', annoyed: 'Mrrt!' },
 };
@@ -46,6 +56,16 @@ const SOUNDS = {
 export const petScale = (pet) => sizeScale(pet.look, pet.species) * 1.3;
 
 const isNight = (date) => date.getHours() >= 22 || date.getHours() < 6;
+const clampX = (x) => Math.min(MAX_X, Math.max(MIN_X, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// Where a ball in flight will land on the floor, ignoring walls.
+function landingX(ball) {
+  const floor = GROUND - BALL_R;
+  const disc = ball.vy * ball.vy + 2 * GRAVITY * Math.max(0, floor - ball.y);
+  const t = (ball.vy + Math.sqrt(disc)) / GRAVITY;
+  return ball.x + ball.vx * t;
+}
 
 // Each activity: label (status line), enter, tick, optional exit.
 // tick returns true when finished; it may also start another activity.
@@ -64,6 +84,19 @@ const ACTS = {
     label: (w) => `${w.pet.name} is pottering around.`,
     enter(w, a) { a.x = w.pickSpot(120); w.setPose('stand', { wag: 0.25 }); },
     tick(w, a) { return w.goTo(a.x, 'walk'); },
+  },
+
+  follow: {
+    label: (w) => `${w.pet.name} is following you.`,
+    enter(w, a) { a.phase = 'go'; w.setPose('stand', { wag: 0.7, ears: 0.7 }); },
+    tick(w, a) {
+      if (a.phase === 'go') {
+        if (w.goTo(w.ownerSpot(), 'trot')) { a.phase = 'wait'; a.from = a.t; w.faceOwner(); w.setPose('sit', { wag: 0.6 }); }
+        return a.t > 10;
+      }
+      w.stop();
+      return a.t - a.from > 4;
+    },
   },
 
   sniff: {
@@ -96,7 +129,7 @@ const ACTS = {
     enter(w, a) { a.phase = w.scene === 'home' ? 'go' : 'settle'; a.settleAt = 0; w.setPose('stand'); },
     tick(w, a) {
       if (a.phase === 'go') {
-        if (w.goTo(BED_X, 'walk')) { a.phase = 'settle'; }
+        if (w.goTo(BED_X, 'walk')) a.phase = 'settle';
         return false;
       }
       w.stop();
@@ -110,7 +143,7 @@ const ACTS = {
       const target = isNight(w.now()) ? 100 : 95;
       return w.pet.needs.energy >= target && a.t - a.slept > 25;
     },
-    exit(w, a) { if (a.phase === 'sleep') w.speak(w.sound('yawn'), 1.5); },
+    exit(w, a) { if (a.phase === 'sleep') w.vocal('yawn', 1.5); },
   },
 
   eat: {
@@ -129,12 +162,14 @@ const ACTS = {
       a.eaten = (a.eaten ?? 0) + grams;
       addNeeds(pet, { fullness: (grams / portion) * 55 });
       if (w.chance(dt * 2)) w.emit('crumb', 1);
-      const done = pet.bowlGrams <= 0.5 || pet.needs.fullness >= 97;
+      // Keep eating while the owner is still pouring.
+      const pouring = w.drag?.item === 'scoop';
+      const done = !pouring && (pet.bowlGrams <= 0.5 || pet.needs.fullness >= 97);
       if (done) {
         if (pet.bowlGrams <= 0.5) pet.bowlGrams = 0;
         pet.memory.stats.meals += 1;
         pet.memory.stats.grams += Math.round(a.eaten);
-        w.speak(w.sound('content'), 1.5);
+        w.vocal('content', 1.5);
       }
       return done;
     },
@@ -148,37 +183,42 @@ const ACTS = {
     tick(w, a) {
       if (w.pet.bowlGrams > 0) { w.start('eat'); return false; }
       if (a.phase === 'go') {
-        if (w.goTo(BOWL_X + 55 * w.scale, 'walk')) { a.phase = 'wait'; a.from = a.t; w.body.dir = 1; w.setPose('sit', { ears: 0.9, tilt: 0.4 }); }
+        if (w.goTo(BOWL_X + 55 * w.scale, 'walk')) { a.phase = 'wait'; a.from = a.t; w.faceOwner(); w.setPose('sit', { ears: 0.9, tilt: 0.4 }); }
         return false;
       }
       w.stop();
-      if (a.t - (a.lastCall ?? -9) > 3.5) { a.lastCall = a.t; w.speak(w.sound('beg'), 1.6); }
+      if (a.t - (a.lastCall ?? -9) > 3.5) { a.lastCall = a.t; w.vocal('beg', 1.6); }
       return a.t - a.from > a.dur;
     },
   },
 
   attention: {
     label: (w) => `${w.pet.name} wants your attention.`,
-    enter(w, a) { a.x = FRONT_X + w.rand(-60, 60); a.phase = 'go'; a.dur = w.rand(7, 11); w.setPose('stand', { wag: 0.6 }); },
+    enter(w, a) { a.phase = 'go'; a.dur = w.rand(7, 11); w.setPose('stand', { wag: 0.6 }); },
     tick(w, a) {
       if (a.phase === 'go') {
-        if (w.goTo(a.x, 'trot')) { a.phase = 'wait'; a.from = a.t; w.setPose(w.chance(0.5) ? 'sit' : 'stand', { wag: 0.9, ears: 0.9, mouth: 0.4 }); }
-        return false;
+        if (w.goTo(w.ownerSpot(), 'trot')) {
+          a.phase = 'wait';
+          a.from = a.t;
+          w.faceOwner();
+          w.setPose(w.chance(0.5) ? 'sit' : 'stand', { wag: 0.9, ears: 0.9, mouth: 0.4 });
+        }
+        return a.t > 12;
       }
       w.stop();
-      if (a.t - (a.lastCall ?? -9) > 4) { a.lastCall = a.t; w.speak(w.sound('greet'), 1.4); if (w.pet.species === 'dog' && w.chance(0.5)) w.hop(); }
+      if (a.t - (a.lastCall ?? -9) > 4) { a.lastCall = a.t; w.vocal('greet', 1.4); if (w.pet.species === 'dog' && w.chance(0.5)) w.hop(); }
       return a.t - a.from > a.dur;
     },
   },
 
   zoomies: {
     label: (w) => `${w.pet.name} has the zoomies!`,
-    enter(w, a) { a.laps = Math.round(w.rand(3, 5)); a.x = w.body.x < FRONT_X ? MAX_X - 30 : MIN_X + 30; w.setPose('happy'); },
+    enter(w, a) { a.laps = Math.round(w.rand(3, 5)); a.x = w.body.x < 400 ? MAX_X - 30 : MIN_X + 60; w.setPose('happy'); },
     tick(w, a) {
       if (w.goTo(a.x, 'run')) {
         a.laps -= 1;
         addNeeds(w.pet, { fun: 3 });
-        a.x = a.x > FRONT_X ? MIN_X + 30 : MAX_X - 30;
+        a.x = a.x > 400 ? MIN_X + 60 : MAX_X - 30;
         if (w.chance(0.4)) w.hop();
       }
       return a.laps <= 0;
@@ -213,6 +253,18 @@ const ACTS = {
 
   // --- Reactions to the owner ---
 
+  // Ball in the owner's hand: a keen dog play-bows, a cat stalks.
+  watchBall: {
+    label: (w) => w.pet.species === 'cat' ? `${w.pet.name} is eyeing the ball.` : `${w.pet.name} is ready for the throw!`,
+    enter(w) { w.stop(); w.setPose(w.pet.species === 'cat' ? 'crouch' : 'playBow'); },
+    tick(w, a) {
+      w.stop();
+      w.face(w.ball.x);
+      if (w.pet.species === 'dog' && a.t - (a.lastBark ?? -9) > 3 && w.chance(0.02)) { a.lastBark = a.t; w.vocal('excited', 1); }
+      return w.ball.state !== 'drag';
+    },
+  },
+
   chase: {
     label: (w) => `${w.pet.name} is chasing the ball!`,
     enter(w) { w.setPose('happy', { mouth: 0.5 }); },
@@ -220,14 +272,24 @@ const ACTS = {
       const ball = w.ball;
       if (ball.state !== 'air' && ball.state !== 'ground') return true;
       if (a.t > 14) return true;
-      const near = Math.abs(ball.x - w.body.x) < 22 * w.scale;
-      if (ball.state === 'ground' && near) {
-        ball.state = 'mouth';
-        w.setPose('happy', { mouth: 0.2 });
-        w.start(a.retrieve ? 'fetchBack' : 'keepBall');
+      const s = w.scale;
+      const mouth = w.mouthPoint();
+
+      if (ball.state === 'air') {
+        // Leap for a ball coming down nearby; catch it if it reaches the mouth.
+        if (Math.hypot(ball.x - mouth.x, ball.y - mouth.y) < 24 * s) { w.pickUp(true, a); return false; }
+        const above = mouth.y - ball.y;
+        if (w.pet.species === 'dog' && ball.vy > 0 && Math.abs(ball.x - mouth.x) < 50 * s && above > 10 && above < 140 * s) w.hop(330);
+        const land = clampX(landingX(ball));
+        w.goTo(land - Math.sign(land - w.body.x || 1) * 75 * s, 'run');
         return false;
       }
-      w.goTo(ball.x, 'run');
+      // Ball on the floor: run up, lower the head and grab it.
+      const side = Math.sign(ball.x - w.body.x || 1);
+      const close = Math.abs(ball.x - w.body.x) < 130 * s;
+      w.body.target.head = close ? 0.8 : 0;
+      if (Math.abs(ball.x - mouth.x) < 34 * s && side === w.body.dir) { w.pickUp(false, a); return false; }
+      if (w.goTo(ball.x - side * 85 * s, close ? 'trot' : 'run')) w.face(ball.x);
       return false;
     },
   },
@@ -237,18 +299,19 @@ const ACTS = {
     enter(w, a) { a.phase = 'go'; },
     tick(w, a) {
       if (a.phase === 'go') {
-        if (w.goTo(FRONT_X, 'trot')) {
+        if (w.goTo(w.ownerSpot(), 'trot')) {
           a.phase = 'drop';
           a.from = a.t;
-          w.dropBall(40);
+          w.faceOwner();
+          w.dropBall(30);
           w.setPose('sit', { wag: 1, ears: 0.9, mouth: 0.6 });
           addNeeds(w.pet, { fun: 8, affection: 2 });
           addBond(w.pet, 0.3);
           w.pet.memory.stats.fetches += 1;
           noteHabit(w.pet, 'fetch');
-          w.speak(w.sound('happy'), 1.2);
+          w.vocal('happy', 1.2);
         }
-        return false;
+        return a.t > 12;
       }
       w.stop();
       return a.t - a.from > 4;
@@ -272,17 +335,20 @@ const ACTS = {
       const p = w.pet;
       a.limit = p.species === 'cat' ? 3 + p.traits.cuddly * 10 + p.bond / 15 : 40 + p.traits.cuddly * 40;
       w.setPose(w.body.pose.sit > 0.5 ? 'sit' : 'stand', POSES.petted);
+      if (p.species === 'cat') w.vocal('content', 1.6);
     },
     tick(w, a, dt) {
       w.stop();
       const p = w.pet;
       if (w.petting) {
-        addNeeds(p, { affection: 3.2 * dt, fun: 0.3 * dt });
-        addBond(p, 0.025 * dt);
-        if (a.t - (a.lastHeart ?? -1) > 0.7) { a.lastHeart = a.t; w.emit('heart', 1); }
+        // Stroking feels better than a hand resting still.
+        const stroke = Math.min(1, w.petting.stroke / 300);
+        addNeeds(p, { affection: (1.6 + stroke * 3.2) * dt, fun: 0.3 * dt });
+        addBond(p, (0.015 + stroke * 0.02) * dt);
+        if (a.t - (a.lastHeart ?? -1) > 0.9 - stroke * 0.5) { a.lastHeart = a.t; w.emit('heart', 1); }
         if (a.t > a.limit) {
-          w.petting = false;
-          w.speak(w.sound(p.species === 'cat' ? 'annoyed' : 'content'), 1.4);
+          w.stopPetting();
+          w.vocal(p.species === 'cat' ? 'annoyed' : 'content', 1.4);
           w.start('wander');
           return false;
         }
@@ -291,6 +357,56 @@ const ACTS = {
       }
       a.released ??= a.t;
       return a.t - a.released > 1.2;
+    },
+  },
+
+  // Following a treat in the owner's hand. Held high, a pet sits to look up;
+  // held at the floor, it lies down. That is how real lure training works.
+  lure: {
+    label: (w, a) => a.pose === 'sit' ? `${w.pet.name} sat for the treat.`
+      : a.pose === 'down' ? `${w.pet.name} lay down for the treat.`
+      : `${w.pet.name} is following the treat.`,
+    enter(w, a) { a.pose = 'stand'; w.setPose('stand', POSES.beg); },
+    tick(w, a) {
+      const d = w.drag;
+      if (!d || d.item !== 'treat') return true;
+      const s = w.scale;
+      const side = d.x >= w.body.x ? 1 : -1;
+      const near = w.goTo(d.x - side * 42 * s, 'trot') || Math.abs(d.x - w.body.x) < 70 * s;
+      if (!near) { a.pose = 'stand'; return false; }
+      w.stop();
+      w.face(d.x);
+      const head = w.headPoint();
+      let pose = 'stand';
+      if (d.y < head.y - 30 * s) pose = 'sit';
+      else if (d.y > GROUND - 40 * s) pose = 'down';
+      if (pose !== a.pose) {
+        a.pose = pose;
+        if (pose === 'sit') w.setPose('sit', { ...POSES.beg, tilt: -0.5 });
+        else if (pose === 'down') w.setPose('lie', { head: 0.1, ears: 0.8, wag: 0.6 });
+        else w.setPose('stand', POSES.beg);
+      }
+      // A treat given while in position rewards that position.
+      if (pose === 'sit' && w.body.pose.sit > 0.7) w.offerReward('sit', 1.5);
+      if (pose === 'down' && w.body.pose.lie > 0.7) w.offerReward('down', 1.5);
+      return false;
+    },
+  },
+
+  floorTreat: {
+    label: (w) => `${w.pet.name} found a treat on the floor.`,
+    enter(w, a) { a.phase = 'go'; w.setPose('happy'); },
+    tick(w, a) {
+      const t = w.floorTreat;
+      if (!t) return true;
+      if (a.phase === 'go') {
+        const side = t.x >= w.body.x ? 1 : -1;
+        if (w.goTo(t.x - side * 45 * w.scale, 'trot')) { a.phase = 'eat'; a.from = a.t; w.face(t.x); w.setPose('eat'); }
+        return a.t > 10;
+      }
+      w.stop();
+      if (a.t - a.from > 0.8 && w.floorTreat) { w.floorTreat = null; w.treatEffects(); w.setPose('stand', { chew: 1, wag: 0.8 }); }
+      return a.t - a.from > 2.2;
     },
   },
 
@@ -317,7 +433,7 @@ const ACTS = {
 
   confused: {
     label: (w) => `${w.pet.name} tilts their head.`,
-    enter(w) { w.stop(); w.setPose('stand', { tilt: 1, ears: 0.9 }); w.speak('?', 1.5); },
+    enter(w) { w.stop(); w.faceOwner(); w.setPose('stand', { tilt: 1, ears: 0.9 }); w.speak('?', 1.5); },
     tick(w, a) { w.stop(); return a.t > 2; },
   },
 
@@ -326,8 +442,14 @@ const ACTS = {
     enter(w, a) { a.phase = 'go'; w.setPose('stand', { wag: 0.8, ears: 0.8 }); },
     tick(w, a) {
       if (a.phase === 'go') {
-        if (w.scene === 'park' || w.goTo(FRONT_X + w.rand(-20, 20), 'trot')) { a.phase = 'wait'; a.from = a.t; w.setPose('sit', { wag: 0.9, ears: 0.9 }); w.offerReward('sit', 4); }
-        return false;
+        if (w.scene === 'park' || w.goTo(w.ownerSpot(), 'trot')) {
+          a.phase = 'wait';
+          a.from = a.t;
+          w.faceOwner();
+          w.setPose('sit', { wag: 0.9, ears: 0.9 });
+          w.offerReward('sit', 4);
+        }
+        return a.t > 12;
       }
       w.stop();
       return a.t - a.from > 3;
@@ -336,20 +458,13 @@ const ACTS = {
 
   treat: {
     label: (w) => `${w.pet.name} is munching a treat.`,
-    enter(w, a) { a.phase = 'go'; w.setPose('happy'); },
-    tick(w, a) {
-      if (a.phase === 'go') {
-        if (w.scene === 'park' || w.goTo(FRONT_X, 'trot')) { a.phase = 'chew'; a.from = a.t; w.setPose('sit', { chew: 1, wag: 1, eyes: 0.3 }); }
-        return false;
-      }
-      w.stop();
-      return a.t - a.from > 2.2;
-    },
+    enter(w) { w.stop(); w.setPose(w.body.pose.lie > 0.5 ? 'lie' : 'sit', { chew: 1, wag: 1, eyes: 0.3 }); },
+    tick(w, a) { w.stop(); return a.t > 2.2; },
   },
 
   excited: {
     label: (w) => `${w.pet.name} is excited!`,
-    enter(w, a) { w.stop(); w.setPose('happy'); w.speak(w.sound('excited'), 1.4); a.hops = 0; },
+    enter(w, a) { w.stop(); w.faceOwner(); w.setPose('happy'); w.vocal('excited', 1.4); a.hops = 0; },
     tick(w, a) {
       w.stop();
       if (w.pet.species === 'dog' && a.t - (a.lastHop ?? -1) > 0.45 && a.hops < 3) { a.lastHop = a.t; a.hops += 1; w.hop(); }
@@ -359,7 +474,7 @@ const ACTS = {
 
   sulk: {
     label: (w) => `${w.pet.name} is sulking.`,
-    enter(w, a) { w.stop(); w.body.dir *= -1; w.setPose('lie', POSES.sad); a.dur = w.rand(4, 7); },
+    enter(w, a) { w.stop(); w.body.dir = w.owner.x > w.body.x ? -1 : 1; w.setPose('lie', POSES.sad); a.dur = w.rand(4, 7); },
     tick(w, a) { w.stop(); return a.t > a.dur; },
   },
 
@@ -369,8 +484,8 @@ const ACTS = {
     tick(w, a) {
       const dog = w.pet.species === 'dog';
       if (a.phase === 'go') {
-        if (w.goTo(FRONT_X, dog ? 'run' : 'walk')) { a.phase = 'hello'; a.from = a.t; w.speak(w.sound('greet'), 1.6); }
-        return false;
+        if (w.goTo(w.ownerSpot(), dog ? 'run' : 'walk')) { a.phase = 'hello'; a.from = a.t; w.faceOwner(); w.vocal('greet', 1.6); }
+        return a.t > 12;
       }
       w.stop();
       if (dog && a.t - (a.lastHop ?? -1) > 0.5 && a.t - a.from < 2) { a.lastHop = a.t; w.hop(); }
@@ -379,62 +494,81 @@ const ACTS = {
     },
   },
 
-  // --- Walks ---
+  // --- Walks: the owner walks, the pet goes along on the leash ---
 
   leash: {
     label: (w, a) => ({
       walk: `${w.pet.name} is trotting along.`,
+      wait: `${w.pet.name} is waiting for you.`,
       sniff: `${w.pet.name} found a very good smell.`,
       squirrel: w.pet.species === 'dog' ? `${w.pet.name} spotted a squirrel!` : `${w.pet.name} is stalking a bird.`,
-      look: `${w.pet.name} is taking in the view.`,
       flop: `${w.pet.name} flopped down and refuses to move.`,
       tired: `${w.pet.name} is tired. Time to head home?`,
     })[a.phase],
     enter(w, a) {
       const p = w.pet;
-      a.phase = 'walk';
-      a.next = w.rand(5, 10);
+      w.setLeash(a, 'walk');
+      a.next = w.rand(4, 8);
       // Cats often protest the harness.
       if (p.species === 'cat' && w.chance(0.25 + p.traits.stubborn * 0.4 - p.traits.energy * 0.2)) w.setLeash(a, 'flop', w.rand(4, 7));
-      else w.setPose('stand', { wag: 0.6, ears: 0.7, tailUp: 0.75 });
     },
     tick(w, a, dt) {
       const p = w.pet;
-      const walk = w.walk;
-      addNeeds(p, { fun: 0.12 * dt, affection: 0.04 * dt });
-      addBond(p, 0.004 * dt);
+      const o = w.owner;
+      const s = w.scale;
+      const moving = o.walkInput !== 0;
+      if (moving) {
+        addNeeds(p, { fun: 0.12 * dt, affection: 0.04 * dt });
+        addBond(p, 0.004 * dt);
+      }
       if (a.phase !== 'tired' && p.needs.energy < 12) w.setLeash(a, 'tired', 999);
+      const ahead = moving ? o.walkInput : (w.body.x >= o.x ? 1 : -1);
+      const tight = w.walk.tension > 0.85;
+
       switch (a.phase) {
-        case 'walk': {
-          w.body.vx = GAITS.walk * Math.sqrt(w.scale) * (0.9 + p.traits.energy * 0.4);
-          w.body.dir = 1;
-          if (a.t > a.next) {
+        case 'walk':
+        case 'wait': {
+          const spot = o.x + ahead * 70 * s;
+          if (Math.abs(spot - w.body.x) > 18) {
+            if (a.phase === 'wait') w.setLeash(a, 'walk');
+            w.goTo(spot, Math.abs(spot - w.body.x) > 90 ? 'run' : 'trot');
+          } else {
+            w.stop();
+            if (!moving && a.phase === 'walk' && a.t > (a.stillSince ?? (a.stillSince = a.t)) + 2.5) w.setLeash(a, 'wait');
+          }
+          if (moving) a.stillSince = undefined;
+          if (moving && a.t > a.next) {
             const r = w.rng();
-            if (r < 0.4) w.setLeash(a, 'sniff', w.rand(2, 4));
-            else if (r < 0.65) { w.setLeash(a, 'squirrel', 2.5); walk.critter = { x: walk.offset + w.body.x + 260, kind: p.species === 'dog' ? 'squirrel' : 'bird', t: 0 }; }
-            else w.setLeash(a, 'look', w.rand(1.5, 3));
+            if (r < 0.45) w.setLeash(a, 'sniff', w.rand(2, 4));
+            else if (r < 0.75) {
+              w.setLeash(a, 'squirrel', 2.8);
+              w.walk.critter = { x: o.x + ahead * 380, dir: ahead, kind: p.species === 'dog' ? 'squirrel' : 'bird', t: 0 };
+            } else a.next = a.t + w.rand(5, 9);
           }
           break;
         }
+        case 'sniff':
+          w.stop();
+          // A firm tug on the leash ends the sniffing.
+          a.tug = tight ? (a.tug ?? 0) + dt : 0;
+          if (a.t > a.until || a.tug > 0.7) w.setLeash(a, 'walk');
+          break;
         case 'squirrel': {
-          if (p.species === 'dog') {
-            w.body.vx = GAITS.trot * 1.4;
-            if (a.t - (a.lastBark ?? -9) > 1) { a.lastBark = a.t; w.speak(w.sound('alert'), 0.9); }
+          const c = w.walk.critter;
+          if (p.species === 'dog' && c) {
+            w.goTo(c.x, 'run');
+            if (a.t - (a.lastBark ?? -9) > 0.9) { a.lastBark = a.t; w.vocal('alert', 0.8); }
             addNeeds(p, { fun: 1.5 * dt });
-          } else w.body.vx = 0;
-          if (a.t > a.until) w.setLeash(a, 'walk');
+          } else { w.stop(); if (c) w.face(c.x); }
+          if (a.t > a.until || !c) w.setLeash(a, 'walk');
           break;
         }
         case 'flop':
-          w.body.vx = 0;
+          w.stop();
           if (a.t > a.until) w.setLeash(a, w.chance(0.6) ? 'walk' : 'flop', w.rand(3, 6));
           break;
-        case 'tired':
-          w.body.vx = 0;
-          break;
         default:
-          w.body.vx = 0;
-          if (a.t > a.until) w.setLeash(a, 'walk');
+          w.stop();
       }
       return false;
     },
@@ -443,31 +577,41 @@ const ACTS = {
 
 const LEASH_POSES = {
   walk: ['stand', { wag: 0.6, ears: 0.7, tailUp: 0.75 }],
+  wait: ['sit', { wag: 0.4, ears: 0.8 }],
   sniff: ['sniff', {}],
-  squirrel: ['alert', {}],
-  look: ['stand', { ears: 0.9, tilt: 0.3 }],
+  squirrel: ['alert', { mouth: 0.4 }],
   flop: ['lie', { ears: 0.3, wag: 0, tailUp: 0.1 }],
   tired: ['lie', { mouth: 0.6, ears: 0.3 }],
 };
 
 export class World {
-  constructor(pet, { rng = Math.random, clock = () => new Date(), onNote = () => {}, onToast = () => {} } = {}) {
+  constructor(pet, {
+    rng = Math.random, clock = () => new Date(), onNote = () => {}, onToast = () => {}, onSound = () => {},
+  } = {}) {
     this.pet = pet;
     this.rng = rng;
     this.clock = clock;
     this.onNote = onNote;
     this.onToast = onToast;
+    this.onSound = onSound;
     this.time = 0;
     this.scene = 'home';
+    this.cam = 0;
     this.scale = petScale(pet);
     this.body = {
-      x: 300, dir: 1, vx: 0, speed: 0, gait: 0, wagPhase: 0, jump: 0, jumpV: 0,
+      x: 330, dir: 1, vx: 0, speed: 0, gait: 0, wagPhase: 0, jump: 0, jumpV: 0,
       pose: { ...POSES.stand }, target: { ...POSES.stand },
     };
-    this.ball = { state: 'hand', x: FRONT_X, y: GROUND - BALL_R, vx: 0, vy: 0, spin: 0 };
+    this.owner = {
+      x: 560, dir: -1, vx: 0, speed: 0, phase: 0, crouch: 0, hand: null,
+      targetX: null, walkInput: 0, lastMoved: -99, bubble: null,
+    };
+    this.ball = { state: 'ground', x: 470, y: GROUND - BALL_R, vx: 0, vy: 0, spin: 0 };
+    this.drag = null; // { item: 'ball' | 'scoop' | 'treat', x, y, poured }
+    this.floorTreat = null;
     this.particles = [];
     this.bubble = null;
-    this.petting = false;
+    this.petting = null; // { x, y, stroke }
     this.reward = null;
     this.heard = {};
     this.walk = null;
@@ -479,7 +623,6 @@ export class World {
   now() { return this.clock(); }
   rand(a, b) { return a + (b - a) * this.rng(); }
   chance(p) { return this.rng() < p; }
-  sound(kind) { return SOUNDS[this.pet.species][kind] ?? SOUNDS[this.pet.species].happy; }
 
   setPose(name, extra = {}) {
     this.body.target = { ...POSES.stand, ...POSES[name], ...extra };
@@ -489,9 +632,12 @@ export class World {
 
   face(x) { if (Math.abs(x - this.body.x) > 2) this.body.dir = x > this.body.x ? 1 : -1; }
 
+  faceOwner() { this.face(this.owner.x); }
+
   goTo(x, gait = 'walk') {
     const b = this.body;
-    const dx = x - b.x;
+    const target = this.scene === 'home' ? clampX(x) : x;
+    const dx = target - b.x;
     if (Math.abs(dx) < 6) { b.vx = 0; return true; }
     const speed = GAITS[gait] * Math.sqrt(this.scale);
     b.dir = Math.sign(dx);
@@ -505,33 +651,67 @@ export class World {
       const x = this.rand(MIN_X + 40, MAX_X - 40);
       if (Math.abs(x - this.body.x) >= minDistance) return x;
     }
-    return this.body.x > FRONT_X ? MIN_X + 60 : MAX_X - 60;
+    return this.body.x > 400 ? MIN_X + 60 : MAX_X - 60;
+  }
+
+  // A spot right next to the owner, on whichever side the pet is.
+  ownerSpot() {
+    const o = this.owner;
+    const side = this.body.x < o.x ? -1 : 1;
+    const x = o.x + side * 85 * this.scale;
+    if (this.scene !== 'home') return x;
+    return x < MIN_X || x > MAX_X ? o.x - side * 85 * this.scale : x;
   }
 
   hop(v = 240) { if (this.body.jump <= 0) this.body.jumpV = v; }
 
   speak(text, secs = 1.5) { this.bubble = { text, until: this.time + secs }; }
 
-  emit(type, count = 1) {
-    const head = this.headPoint();
+  // A sound the pet makes: shown in a bubble and played out loud.
+  vocal(kind, secs = 1.5) {
+    const lines = VOICE_LINES[this.pet.species];
+    this.speak(lines[kind] ?? lines.happy, secs);
+    this.onSound(kind);
+  }
+
+  emit(type, count = 1, at = null) {
+    const from = at ?? this.headPoint();
     for (let i = 0; i < count; i++) {
       this.particles.push({
-        type, x: head.x + this.rand(-8, 8), y: head.y - 10,
-        vx: this.rand(-12, 12), vy: type === 'crumb' ? this.rand(-40, -10) : this.rand(-38, -24),
-        age: 0, life: type === 'crumb' ? 0.7 : 1.8,
+        type, x: from.x + this.rand(-8, 8), y: from.y - (at ? 0 : 10),
+        vx: this.rand(-12, 12), vy: type === 'crumb' ? this.rand(-40, -10) : type === 'kibble' ? this.rand(10, 60) : this.rand(-38, -24),
+        age: 0, life: type === 'crumb' ? 0.7 : type === 'kibble' ? 1.2 : 1.8,
       });
     }
   }
 
-  // Rough head position in view space, for bubbles and particles.
+  // Centre of the pet's head, from the blend of standing, sitting, lying and lowered poses.
   headPoint() {
     const b = this.body;
+    const p = b.pose;
     const s = this.scale;
-    const lowered = Math.max(b.pose.head, b.pose.lie * 0.6);
-    return { x: b.x + b.dir * 60 * s, y: GROUND - b.jump - (100 - lowered * 60) * s };
+    const cat = this.pet.species === 'cat';
+    const sit = p.sit * (1 - p.lie);
+    let dx = cat ? 50 : 58;
+    let dy = cat ? 80 : 95;
+    dx = lerp(dx, cat ? 38 : 45, sit);
+    dy = lerp(dy, cat ? 95 : 112, sit);
+    dx = lerp(dx, cat ? 54 : 62, p.lie);
+    dy = lerp(dy, cat ? 42 : 50, p.lie);
+    dx = lerp(dx, dx + 20, p.head);
+    dy = lerp(dy, 22, p.head);
+    return { x: b.x + b.dir * dx * s, y: GROUND - b.jump - dy * s };
+  }
+
+  mouthPoint() {
+    const h = this.headPoint();
+    const s = this.scale;
+    return { x: h.x + this.body.dir * 26 * s, y: h.y + 10 * s };
   }
 
   isAsleep() { return this.activity?.type === 'sleep' && this.activity.phase === 'sleep'; }
+
+  isBusy() { return ['eat', 'chase', 'fetchBack', 'petted', 'trick', 'treat', 'floorTreat'].includes(this.activity.type); }
 
   offerReward(trick, secs) { this.reward = { trick, until: this.time + secs }; }
 
@@ -543,13 +723,33 @@ export class World {
     this.setPose(pose, extra);
   }
 
+  pickUp(inAir, a) {
+    this.ball.state = 'mouth';
+    this.setPose('happy', { mouth: 0.2 });
+    if (inAir) {
+      addNeeds(this.pet, { fun: 4 });
+      const note = this.milestone('catch', `${this.pet.name} caught the ball in mid-air!`);
+      if (note) this.onNote(note);
+    }
+    this.start(a.retrieve ? 'fetchBack' : 'keepBall');
+  }
+
   dropBall(forward) {
     const b = this.body;
-    this.ball.state = 'ground';
-    this.ball.x = Math.min(MAX_X, Math.max(MIN_X, b.x + b.dir * 55 * this.scale));
-    this.ball.y = GROUND - 30;
-    this.ball.vx = b.dir * forward * 0.5;
-    this.ball.vy = -40;
+    const mouth = this.mouthPoint();
+    this.ball.state = 'air';
+    this.ball.x = clampX(mouth.x);
+    this.ball.y = Math.min(GROUND - BALL_R, mouth.y);
+    this.ball.vx = b.dir * forward;
+    this.ball.vy = -60;
+  }
+
+  milestone(key, text) {
+    const m = this.pet.memory.milestones;
+    if (m[key]) return null;
+    m[key] = Date.now();
+    addJournal(this.pet, text);
+    return text;
   }
 
   start(type, params = {}) {
@@ -581,10 +781,12 @@ export class World {
     const night = isNight(date);
     const deficit = (v) => (100 - v) / 100;
     const expectFood = p.bowlGrams === 0 && n.fullness < 85 ? expects(p, 'feed', date) : 0;
+    const ownerMoved = this.time - this.owner.lastMoved < 6;
 
     const scores = {
       idle: 0.35,
       wander: 0.25 + t.energy * 0.35,
+      follow: ownerMoved ? t.cuddly * (cat ? 0.4 : 1.2) + p.bond / 200 : 0,
       sit: 0.3,
       lie: 0.1 + deficit(n.energy) * 0.7 + (1 - t.energy) * 0.35 + (cat ? 0.2 : 0),
       sleep: (n.energy < 50 ? deficit(n.energy) ** 2 * 3.5 : 0) + (night && n.energy < 97 ? 1.6 : 0) + (cat && n.energy < 75 ? 0.4 : 0),
@@ -596,10 +798,11 @@ export class World {
       groom: cat ? 0.4 : 0,
       sniff: cat ? 0 : 0.3,
     };
+    if (this.floorTreat) scores.floorTreat = 5;
     if (this.lastChoice) scores[this.lastChoice] *= 0.4;
 
     const entries = Object.entries(scores).filter(([, v]) => v > 0);
-    const total = entries.reduce((s, [, v]) => s + v * v, 0);
+    const total = entries.reduce((sum, [, v]) => sum + v * v, 0);
     let r = this.rng() * total;
     let choice = entries[0][0];
     for (const [k, v] of entries) {
@@ -610,12 +813,10 @@ export class World {
     this.start(choice);
   }
 
-  // --- owner actions ---
+  // --- learning hooks ---
 
   wake() {
-    if (this.activity.type !== 'sleep') return true;
-    this.start('idle');
-    return true;
+    if (this.activity.type === 'sleep') this.start('idle');
   }
 
   // Remember words the owner said, so a following action can teach them.
@@ -650,12 +851,172 @@ export class World {
     if (note) this.onNote(note);
   }
 
-  feed() {
-    if (this.scene !== 'home') return this.onToast('The food bowl is at home.');
+  // --- what the owner's hands can touch ---
+
+  hitTest(x, y) {
+    if (this.scene === 'home') {
+      if (Math.abs(x - BAG_X) < 28 && y > GROUND - 78 && y < GROUND + 4) return 'bag';
+      if (Math.abs(x - JAR_X) < 20 && y > GROUND - 52 && y < GROUND + 4) return 'jar';
+    }
+    if (this.ballHit(x, y)) return 'ball';
+    if (this.petHit(x, y)) return 'pet';
+    if (this.scene !== 'home') return 'ground';
+    if (y > 296) return 'floor';
+    return 'wall';
+  }
+
+  petHit(x, y) {
+    const s = this.scale;
+    const b = this.body;
+    const head = this.headPoint();
+    const inBody = Math.abs(x - (b.x + b.dir * 10 * s)) < 70 * s && y > GROUND - b.jump - 95 * s && y < GROUND + 6;
+    const inHead = Math.hypot(x - head.x, y - head.y) < 34 * s;
+    return inBody || inHead;
+  }
+
+  ballHit(x, y) {
+    const ball = this.ball;
+    return this.scene === 'home' && ball.state === 'ground' && Math.hypot(x - ball.x, y - ball.y) < 30;
+  }
+
+  shoulder() { return shoulderPoint(this.owner, GROUND); }
+
+  // Keep the owner close enough to reach a point, walking over if needed.
+  reachFor(x, y) {
+    const o = this.owner;
+    o.hand = { x, y };
+    const sh = this.shoulder();
+    if (Math.hypot(x - sh.x, y - sh.y) > ARM_REACH + 10 && this.scene === 'home') {
+      const side = x >= o.x ? 1 : -1;
+      o.targetX = Math.min(MAX_X, Math.max(MIN_X, x - side * 70));
+    }
+  }
+
+  walkOwnerTo(x) {
+    if (this.scene !== 'home') return;
+    this.owner.targetX = Math.min(MAX_X, Math.max(MIN_X, x));
+  }
+
+  grab(item, x, y) {
+    if (this.scene !== 'home' && item !== 'treat') return false;
+    if (item === 'ball') {
+      if (this.ball.state !== 'ground') return false;
+      this.ball.state = 'drag';
+      this.learnWord('ball');
+      const p = this.pet;
+      const keen = p.species === 'dog' ? 0.4 + p.traits.playful * 0.6 : p.traits.playful * 0.6;
+      if (!this.isAsleep() && !this.isBusy() && p.needs.energy > 20 && this.chance(keen)) this.start('watchBall');
+    }
+    this.drag = { item, x, y, poured: 0, vx: 0, vy: 0 };
+    this.reachFor(x, y);
+    if (item === 'treat') this.offerTreat();
+    return true;
+  }
+
+  dragTo(x, y) {
+    if (!this.drag) return;
+    this.drag.x = x;
+    this.drag.y = y;
+    this.reachFor(x, y);
+    if (this.drag.item === 'ball') { this.ball.x = x; this.ball.y = y; }
+  }
+
+  // Let go of whatever is in hand, with the hand's velocity at release.
+  release(vx = 0, vy = 0) {
+    const d = this.drag;
+    if (!d) return;
+    this.drag = null;
+    this.owner.hand = null;
+    if (d.item === 'ball') this.throwFromHand(d.x, d.y, vx, vy);
+    if (d.item === 'treat') {
+      const mouth = this.mouthPoint();
+      if (Math.hypot(d.x - mouth.x, d.y - mouth.y) < 60 * this.scale && !this.isAsleep()) this.handTreat();
+      else {
+        this.floorTreat = { x: d.x, y: d.y, vy: vy * 0.3 };
+        if (this.activity.type === 'lure' || (!this.isAsleep() && !this.isBusy())) this.start('floorTreat');
+      }
+    }
+  }
+
+  throwFromHand(x, y, vx, vy) {
+    const ball = this.ball;
+    const speed = Math.hypot(vx, vy);
+    const max = 1300;
+    const k = speed > max ? max / speed : 1;
+    ball.state = 'air';
+    ball.x = x;
+    ball.y = Math.min(y, GROUND - BALL_R);
+    ball.vx = vx * k;
+    ball.vy = vy * k;
+    if (speed < 150) {
+      // Just dropped it.
+      if (this.activity.type === 'watchBall') this.start('idle');
+      return;
+    }
+    this.reactToThrow(landingX(ball));
+  }
+
+  reactToThrow(landX) {
+    const p = this.pet;
+    if (this.isAsleep() && !this.chance(0.15)) return;
+    const t = p.traits;
+    const n = p.needs;
+    const cat = p.species === 'cat';
+    let want = cat ? 0.15 + t.playful * 0.5 : 0.35 + t.playful * 0.55;
+    if (this.activity.type === 'watchBall') want += 0.3;
+    want *= n.energy < 20 ? 0.3 : 1;
+    want += (p.memory.words.ball ?? 0) * 0.15;
+    if (!this.chance(want)) {
+      this.wake();
+      this.face(landX);
+      if (this.activity.type === 'watchBall') this.start('idle');
+      this.speak(cat ? '…' : VOICE_LINES.dog.content, 1.2);
+      return;
+    }
+    const fetches = p.memory.habits.fetch ?? 0;
+    const retrieve = this.chance(cat
+      ? 0.04 + Math.min(0.3, fetches * 0.006)
+      : 0.5 + p.bond / 250 + Math.min(0.25, fetches * 0.01) - t.stubborn * 0.3);
+    this.start('chase', { retrieve });
+  }
+
+  // For the keyboard and tests: throw toward a spot on the floor.
+  throwBall(targetX) {
+    if (this.scene !== 'home') return this.onToast('Save the ball for the living room.');
+    if (this.ball.state === 'mouth') return this.onToast(`${this.pet.name} has the ball.`);
+    const o = this.owner;
+    const tx = clampX(targetX ?? this.rand(MIN_X + 60, MAX_X - 60));
+    const x0 = o.x + o.dir * 30;
+    const y0 = GROUND - 200;
+    const T = 1;
+    this.ball.state = 'drag';
+    this.throwFromHand(x0, y0, (tx - x0) / T, (GROUND - BALL_R - y0 - 0.5 * GRAVITY * T * T) / T);
+  }
+
+  // Pour from the scoop into the bowl while it is held over it.
+  pour(dt) {
+    const d = this.drag;
+    if (!d || d.item !== 'scoop') return;
+    const over = Math.abs(d.x - BOWL_X) < 48 && d.y < GROUND - 15 && d.y > GROUND - 220;
+    if (!over) return;
     const p = this.pet;
     const portion = portionGrams(p);
-    if (p.bowlGrams >= portion * 1.5) return this.onToast(`The bowl is already full.`);
-    p.bowlGrams = Math.min(portion * 2, p.bowlGrams + portion);
+    const cap = portion * 2;
+    const grams = Math.min((portion / 1.4) * dt, Math.max(0, cap - p.bowlGrams));
+    if (this.chance(dt * 25)) this.emit('kibble', 1, { x: d.x + 6, y: d.y + 8 });
+    if (grams <= 0) {
+      if (!d.full) { d.full = true; this.onToast('The bowl is full.'); }
+      return;
+    }
+    const before = d.poured;
+    p.bowlGrams += grams;
+    d.poured += grams;
+    if (before < 5 && d.poured >= 5) this.fed();
+  }
+
+  // Food went in the bowl: the moment a pet learns about.
+  fed() {
+    const p = this.pet;
     addBond(p, 0.5);
     const note = recordRoutine(p, 'feed', this.now());
     if (note) this.onNote(note);
@@ -666,12 +1027,34 @@ export class World {
       return;
     }
     if (p.needs.fullness < 92) {
-      if (p.species === 'dog' && p.needs.fullness < 60) this.speak(this.sound('excited'), 1);
-      this.start('eat');
+      if (p.species === 'dog' && p.needs.fullness < 60) this.vocal('excited', 1);
+      if (this.activity.type !== 'eat') this.start('eat');
     } else this.onToast(`${p.name} isn't hungry right now. The food will wait in the bowl.`);
   }
 
-  giveTreat() {
+  // For the keyboard and tests: pour a full meal at once.
+  feed() {
+    if (this.scene !== 'home') return this.onToast('The food bowl is at home.');
+    const p = this.pet;
+    const portion = portionGrams(p);
+    if (p.bowlGrams >= portion * 1.5) return this.onToast('The bowl is already full.');
+    p.bowlGrams = Math.min(portion * 2, p.bowlGrams + portion);
+    this.fed();
+  }
+
+  // A treat came out of the jar: interested pets come over to follow it.
+  offerTreat() {
+    const p = this.pet;
+    this.learnWord('treat');
+    if (this.isAsleep()) {
+      if (this.chance(0.7)) this.wake(); else return;
+    }
+    if (['eat', 'chase', 'fetchBack'].includes(this.activity.type)) return;
+    const interest = p.species === 'dog' ? 0.95 : 0.55 + p.traits.cuddly * 0.3;
+    if (this.chance(interest)) this.start('lure');
+  }
+
+  treatEffects() {
     const p = this.pet;
     const day = this.now().toDateString();
     const tt = p.memory.treatsToday;
@@ -681,55 +1064,27 @@ export class World {
     addNeeds(p, plenty ? { fullness: 1 } : { fullness: 3, affection: 4, fun: 1 });
     if (!plenty) addBond(p, 0.3);
     noteHabit(p, 'treats');
-    this.learnWord('treat');
     this.positive();
     if (plenty && tt.count === 9) this.onToast(`${p.name} has had plenty of treats today.`);
+  }
+
+  // Treat taken straight from the owner's hand.
+  handTreat() {
+    this.treatEffects();
     this.rewardIfEarned('treat');
-    if (this.isAsleep() && !this.chance(0.8)) return;
     this.start('treat');
   }
 
-  throwBall(targetX) {
-    if (this.scene !== 'home') return this.onToast('Save the ball for the living room.');
-    if (this.ball.state === 'mouth') return this.onToast(`${this.pet.name} has the ball.`);
-    const p = this.pet;
-    const tx = Math.min(MAX_X - 20, Math.max(MIN_X + 20, targetX ?? this.rand(MIN_X + 60, MAX_X - 60)));
-    const T = 0.9;
-    const ball = this.ball;
-    ball.state = 'air';
-    ball.x = FRONT_X;
-    ball.y = VIEW_H + 10;
-    ball.vx = (tx - FRONT_X) / T;
-    ball.vy = (GROUND - BALL_R - ball.y - 0.5 * 900 * T * T) / T;
-    this.learnWord('ball');
-
-    if (this.isAsleep() && !this.chance(0.15)) return;
-    const t = p.traits;
-    const n = p.needs;
-    const cat = p.species === 'cat';
-    let want = cat ? 0.15 + t.playful * 0.5 : 0.35 + t.playful * 0.55;
-    want *= n.energy < 20 ? 0.3 : 1;
-    want += (p.memory.words.ball ?? 0) * 0.15;
-    if (!this.chance(want)) {
-      this.face(tx);
-      if (this.activity.type === 'sleep') this.wake();
-      this.speak(cat ? '…' : this.sound('content'), 1.2);
-      return;
-    }
-    const fetches = p.memory.habits.fetch ?? 0;
-    const retrieve = this.chance(cat
-      ? 0.04 + Math.min(0.3, fetches * 0.006)
-      : 0.5 + p.bond / 250 + Math.min(0.25, fetches * 0.01) - t.stubborn * 0.3);
-    this.start('chase', { retrieve });
+  // For the keyboard and tests: hand over a treat wherever the pet is.
+  giveTreat() {
+    this.learnWord('treat');
+    if (this.isAsleep() && !this.chance(0.8)) { this.treatEffects(); return; }
+    this.handTreat();
   }
 
-  pickUpBall() {
-    if (this.ball.state === 'ground') { this.ball.state = 'hand'; return true; }
-    return false;
-  }
-
-  startPetting() {
-    this.petting = true;
+  startPetting(x, y) {
+    this.petting = { x, y, stroke: 0 };
+    this.reachFor(x, y);
     noteHabit(this.pet, 'petting');
     this.positive();
     this.rewardIfEarned('praise');
@@ -737,11 +1092,24 @@ export class World {
     if (this.activity.type !== 'petted') this.start('petted');
   }
 
-  stopPetting() { this.petting = false; }
+  strokeTo(x, y) {
+    const pt = this.petting;
+    if (!pt) return;
+    pt.stroke += Math.hypot(x - pt.x, y - pt.y);
+    pt.x = x;
+    pt.y = y;
+    this.reachFor(x, y);
+  }
+
+  stopPetting() {
+    this.petting = null;
+    if (!this.drag) this.owner.hand = null;
+  }
 
   say(text) {
     const p = this.pet;
     const u = parseUtterance(text, p.name);
+    this.owner.bubble = { text, until: this.time + 2.5 };
     noteHabit(p, 'talk');
     if (u.name) this.hear('name');
     if (u.topic) this.hear(u.topic);
@@ -751,7 +1119,7 @@ export class World {
       this.positive();
       if (!this.rewardIfEarned('praise') && !this.isAsleep()) {
         this.body.target.wag = 1;
-        this.speak(this.sound('happy'), 1);
+        this.vocal('happy', 1);
       }
     }
     if (u.scold) {
@@ -778,7 +1146,11 @@ export class World {
     if (u.come || (u.name && !u.topic && !u.praise)) {
       const comes = this.chance((p.species === 'cat' ? 0.2 + p.bond / 200 : 0.4 + p.bond / 150) * (1 - p.traits.stubborn * 0.3));
       if (attentive && comes && this.scene === 'home') this.start('come');
-      else if (attentive) { this.body.target.ears = 1; this.face(FRONT_X); }
+      else if (attentive) {
+        this.body.target.ears = 1;
+        this.faceOwner();
+        if (this.chance(0.5)) this.vocal(p.species === 'cat' ? 'greet' : 'happy', 1);
+      }
       return;
     }
     if (u.topic) {
@@ -789,14 +1161,21 @@ export class World {
     }
   }
 
-  startWalk() {
+  // --- walks ---
+
+  startWalk(place = { id: 'park', kind: 'park' }) {
     if (this.scene === 'park') return;
     const p = this.pet;
-    if (this.ball.state === 'mouth') this.dropBall(0);
+    if (this.drag) this.release();
+    this.stopPetting();
+    if (this.ball.state === 'mouth' || this.ball.state === 'air') { this.ball.state = 'ground'; this.ball.y = GROUND - BALL_R; }
+    this.floorTreat = null;
     this.scene = 'park';
-    this.walk = { offset: 0, startedAt: this.time, critter: null };
-    this.body.x = 330;
+    this.walk = { place, distance: 0, startedAt: this.time, critter: null, tension: 0 };
+    Object.assign(this.owner, { x: 260, dir: 1, vx: 0, targetX: null, walkInput: 0, hand: null });
+    this.body.x = 350;
     this.body.vx = 0;
+    this.cam = 0;
     noteHabit(p, 'walks');
     const note = recordRoutine(p, 'walk', this.now());
     if (note) this.onNote(note);
@@ -805,9 +1184,11 @@ export class World {
     this.start('leash');
   }
 
+  setWalkInput(dir) { this.owner.walkInput = this.scene === 'park' ? dir : 0; }
+
   endWalk() {
     if (this.scene !== 'park') return null;
-    const meters = Math.round(this.walk.offset / UNITS_PER_METER);
+    const meters = Math.round(this.walk.distance / UNITS_PER_METER);
     const minutes = Math.max(1, Math.round((this.time - this.walk.startedAt) / 60));
     const stats = this.pet.memory.stats;
     stats.walkMeters += meters;
@@ -815,24 +1196,15 @@ export class World {
     if (stats.walks === 1) addJournal(this.pet, `First walk together: ${meters} m.`);
     this.scene = 'home';
     this.walk = null;
-    this.body.x = FRONT_X;
+    this.cam = 0;
+    Object.assign(this.owner, { x: 560, dir: -1, vx: 0, walkInput: 0, targetX: null });
+    this.body.x = 440;
     this.body.vx = 0;
     this.start('idle');
     return { meters, minutes };
   }
 
   greet() { this.start('greet'); }
-
-  petHit(x, y) {
-    const s = this.scale;
-    const b = this.body;
-    return Math.abs(x - b.x) < 75 * s && y > GROUND - b.jump - 125 * s && y < GROUND + 6;
-  }
-
-  ballHit(x, y) {
-    const ball = this.ball;
-    return ball.state === 'ground' && Math.hypot(x - ball.x, y - ball.y) < 26;
-  }
 
   // --- simulation step ---
 
@@ -846,30 +1218,79 @@ export class World {
       addNeeds(this.pet, { affection: 2 * dt });
       if (Math.floor(this.time / 0.9) !== Math.floor((this.time - dt) / 0.9)) this.emit('heart', 1);
     }
+    if (this.petting) this.petting.stroke *= Math.exp(-dt * 2.5);
 
+    this.moveOwner(dt);
     const done = ACTS[a.type].tick(this, a, dt);
     if (done && this.activity === a) this.next();
 
     this.moveBody(dt);
+    if (this.scene === 'park') this.holdLeash(dt);
+    this.pour(dt);
     this.moveBall(dt);
+    this.moveFloorTreat(dt);
     this.moveParticles(dt);
     if (this.bubble && this.time > this.bubble.until) this.bubble = null;
+    if (this.owner.bubble && this.time > this.owner.bubble.until) this.owner.bubble = null;
     if (this.reward && this.time > this.reward.until) this.reward = null;
+  }
+
+  moveOwner(dt) {
+    const o = this.owner;
+    if (this.scene === 'park') {
+      const resisting = this.walk.tension > 0.8 && ['flop', 'sniff'].includes(this.activity.phase) && Math.sign(this.body.x - o.x) !== o.walkInput;
+      o.vx = o.walkInput * OWNER_WALK_SPEED * (resisting ? 0.45 : 1);
+      if (o.walkInput) o.dir = o.walkInput;
+      this.walk.distance += Math.abs(o.vx * dt);
+    } else if (o.targetX !== null) {
+      const dx = o.targetX - o.x;
+      if (Math.abs(dx) < 4) { o.targetX = null; o.vx = 0; } else {
+        o.vx = Math.sign(dx) * Math.min(OWNER_SPEED, Math.abs(dx) * 4);
+        o.dir = Math.sign(dx);
+      }
+    } else o.vx = 0;
+    o.x += o.vx * dt;
+    if (this.scene === 'home') o.x = Math.min(MAX_X, Math.max(MIN_X, o.x));
+    o.speed = Math.abs(o.vx);
+    o.phase += dt * o.speed / 22;
+    if (o.speed > 5) o.lastMoved = this.time;
+    if (o.hand && o.speed < 5) o.dir = o.hand.x >= o.x ? 1 : -1;
+    // Crouch to reach low things.
+    const want = o.hand ? Math.min(1, Math.max(0, (o.hand.y - (GROUND - 150)) / 110)) : 0;
+    o.crouch += (want - o.crouch) * (1 - Math.exp(-dt * 6));
+    if (this.scene === 'park') {
+      const target = o.x - 330 + o.walkInput * 40;
+      this.cam += (target - this.cam) * (1 - Math.exp(-dt * 3));
+    }
+  }
+
+  // The leash keeps the pet and owner within reach of each other. A lunging
+  // dog pulls its owner along; otherwise the owner tows the pet.
+  holdLeash(dt) {
+    const o = this.owner;
+    const b = this.body;
+    const d = b.x - o.x;
+    const dist = Math.abs(d);
+    if (dist > LEASH) {
+      const excess = dist - LEASH;
+      const lunging = this.activity.phase === 'squirrel' && this.pet.species === 'dog';
+      if (lunging) o.x += Math.sign(d) * excess * 0.6;
+      b.x = o.x + Math.sign(d) * LEASH;
+    }
+    this.walk.tension = Math.min(1, Math.max(0, (Math.abs(b.x - o.x) - (LEASH - 40)) / 40));
+    const c = this.walk.critter;
+    if (c) {
+      c.t += dt;
+      const fleeing = Math.abs(c.x - b.x) < 260 || c.t > 1;
+      c.x += c.dir * (c.kind === 'squirrel' ? 150 : 70) * dt * (fleeing ? 1.6 : 0.2);
+      if (c.t > 5) this.walk.critter = null;
+    }
   }
 
   moveBody(dt) {
     const b = this.body;
-    if (this.scene === 'park') {
-      this.walk.offset += b.vx * dt;
-      if (this.walk.critter) {
-        const c = this.walk.critter;
-        c.t += dt;
-        c.x += (c.kind === 'squirrel' ? 140 : 60) * dt * (c.t > 1 ? 2 : 0.3);
-        if (c.t > 4) this.walk.critter = null;
-      }
-    } else {
-      b.x = Math.min(MAX_X, Math.max(MIN_X, b.x + b.vx * dt));
-    }
+    b.x += b.vx * dt;
+    if (this.scene === 'home') b.x = clampX(b.x);
     b.speed = Math.abs(b.vx);
     b.gait += dt * b.speed / (11 * this.scale);
     // Ease the pose toward its target.
@@ -885,18 +1306,37 @@ export class World {
 
   moveBall(dt) {
     const ball = this.ball;
-    if (ball.state !== 'air' && ball.state !== 'ground') return;
-    ball.vy += 900 * dt;
+    if (this.scene !== 'home' || (ball.state !== 'air' && ball.state !== 'ground')) return;
+    ball.vy += GRAVITY * dt;
     ball.x += ball.vx * dt;
     ball.y += ball.vy * dt;
-    ball.spin += ball.vx * dt / BALL_R;
+    ball.spin += (ball.vx * dt) / BALL_R;
     const floor = GROUND - BALL_R;
     if (ball.y >= floor) {
       ball.y = floor;
-      if (ball.vy > 90) { ball.vy *= -0.5; ball.vx *= 0.85; } else { ball.vy = 0; ball.state = 'ground'; }
+      if (ball.vy > 90) {
+        ball.vy *= -0.55;
+        ball.vx *= 0.82;
+        ball.state = 'air';
+      } else {
+        ball.vy = 0;
+        ball.state = 'ground';
+      }
     }
-    if (ball.state === 'ground') ball.vx *= Math.exp(-2.2 * dt);
-    if (ball.x < 30 || ball.x > VIEW_W - 30) { ball.vx *= -0.5; ball.x = Math.min(VIEW_W - 30, Math.max(30, ball.x)); }
+    if (ball.state === 'ground') ball.vx *= Math.exp(-1.8 * dt);
+    if (ball.x < 14 + BALL_R || ball.x > VIEW_W - 14 - BALL_R) {
+      ball.vx *= -0.6;
+      ball.x = Math.min(VIEW_W - 14 - BALL_R, Math.max(14 + BALL_R, ball.x));
+    }
+  }
+
+  moveFloorTreat(dt) {
+    const t = this.floorTreat;
+    if (!t) return;
+    if (t.y < GROUND - 4) {
+      t.vy += GRAVITY * dt;
+      t.y = Math.min(GROUND - 4, t.y + t.vy * dt);
+    }
   }
 
   moveParticles(dt) {
@@ -904,7 +1344,8 @@ export class World {
       pt.age += dt;
       pt.x += pt.vx * dt;
       pt.y += pt.vy * dt;
-      if (pt.type === 'crumb') pt.vy += 300 * dt;
+      if (pt.type === 'crumb' || pt.type === 'kibble') pt.vy += 600 * dt;
+      if (pt.type === 'kibble' && pt.y > GROUND - 14) { pt.y = GROUND - 14; pt.vy = 0; pt.vx = 0; }
     }
     this.particles = this.particles.filter((pt) => pt.age < pt.life);
   }

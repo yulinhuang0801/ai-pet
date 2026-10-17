@@ -79,6 +79,32 @@
         <div class="traits" id="traits"></div>
       </fieldset>
 
+      <fieldset class="field you">
+        <legend>And you</legend>
+        <p class="help">This is you in the scene: the one who feeds, throws and holds the leash.</p>
+        <div class="segmented wrap" id="hair"></div>
+        <div class="field-row">
+          <div class="field">
+            <span class="sublabel">Hair colour</span>
+            <div class="swatches" id="hair-color"></div>
+          </div>
+          <div class="field">
+            <span class="sublabel">Skin</span>
+            <div class="swatches" id="skin"></div>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <span class="sublabel">Top</span>
+            <div class="swatches" id="top"></div>
+          </div>
+          <div class="field">
+            <span class="sublabel">Trousers</span>
+            <div class="swatches" id="bottom"></div>
+          </div>
+        </div>
+      </fieldset>
+
       <div class="creator-actions">
         <button type="submit" class="primary" id="adopt">Bring them home</button>
         <button type="button" class="ghost" id="cancel-edit" hidden>Cancel</button>
@@ -94,19 +120,32 @@
         <div class="toasts" id="toasts" aria-live="polite"></div>
       </div>
 
-      <div class="actions" role="toolbar" aria-label="Things to do">
-        <button type="button" id="act-feed"><span class="key">F</span>Feed</button>
-        <button type="button" id="act-treat"><span class="key">T</span>Treat</button>
-        <button type="button" id="act-ball"><span class="key">B</span>Throw ball</button>
-        <button type="button" id="act-walk"><span class="key">W</span><span id="walk-label">Go for a walk</span></button>
-        <button type="button" id="act-call"><span class="key">C</span><span id="call-label">Call</span></button>
+      <div class="actions" role="toolbar" aria-label="Things to do" id="home-actions">
+        <button type="button" id="act-walk">Go for a walk</button>
+        <button type="button" id="act-call">Call</button>
+        <button type="button" class="ghost" id="act-sound" aria-pressed="true">Sound on</button>
       </div>
-      <p class="hint">Press and hold on your pet to pet them. Tap the floor to throw the ball there.</p>
+      <div class="actions" role="toolbar" aria-label="Walking" id="walk-actions" hidden>
+        <button type="button" id="walk-back" class="hold">Walk back</button>
+        <button type="button" id="walk-on" class="hold primary">Walk on</button>
+        <span class="walk-stat" id="walk-stat"></span>
+        <button type="button" id="walk-home">Head home</button>
+      </div>
+
+      <div class="places-picker" id="place-picker" hidden>
+        <div class="picker-head">
+          <h3>Where to?</h3>
+          <button type="button" class="ghost" id="picker-close">Not now</button>
+        </div>
+        <ul class="place-grid" id="picker-places"></ul>
+      </div>
+
+      <p class="hint" id="hint"></p>
 
       <form class="talk" id="talk">
         <label for="talk-input" class="sr-only">Say something to your pet</label>
         <input id="talk-input" autocomplete="off" placeholder="Say something… try “sit”, “good girl!” or “want a walk?”">
-        <button type="button" class="mic" id="mic" hidden aria-label="Speak">Mic</button>
+        <button type="button" class="mic" id="mic" hidden aria-pressed="false">Talk out loud</button>
         <button type="submit" class="primary">Say</button>
       </form>
     </div>
@@ -133,6 +172,22 @@
         <h4>Words they know</h4>
         <ul class="words" id="words"></ul>
         <ul class="facts" id="facts"></ul>
+      </section>
+
+      <section class="card">
+        <h3>Your places</h3>
+        <p class="help">Add a photo of your street, your park or your living room, then walk <span class="pet-name"></span> there or make it home.</p>
+        <ul class="place-list" id="places"></ul>
+        <label class="file-button">
+          <input type="file" id="place-file" accept="image/*">
+          <span>Add a photo</span>
+        </label>
+      </section>
+
+      <section class="card">
+        <h3 id="voice-title">Voice</h3>
+        <p class="help" id="voice-help"></p>
+        <ul class="voice-list" id="voices"></ul>
       </section>
 
       <section class="card">

@@ -1,8 +1,11 @@
 // Draws the living room or the park, the pet, and everything around it.
 // The scene follows the real time of day: daylight, sunset, lamp-lit night.
 
-import { drawPet, drawBall, shade } from './pet-art.js';
-import { VIEW_W, VIEW_H, GROUND, BOWL_X, BED_X, BALL_R } from './world.js';
+import { drawPet, drawBall } from './pet-art.js';
+import { drawOwner } from './owner.js';
+import {
+  VIEW_W, VIEW_H, GROUND, BOWL_X, BED_X, BAG_X, JAR_X, BALL_R, LEASH,
+} from './world.js';
 import { portionGrams } from './pet.js';
 
 // 0 = full day, 1 = full night, from the local clock.
@@ -131,14 +134,14 @@ function drawRoom(ctx, world, dark, time) {
 
   // Floor lamp in the corner.
   ctx.fillStyle = '#3d3a36';
-  ctx.fillRect(38, 120, 5, 270);
-  ctx.fillRect(22, 386, 37, 6);
+  ctx.fillRect(768, 120, 5, 230);
+  ctx.fillRect(752, 346, 37, 6);
   ctx.fillStyle = dark > 0.3 ? '#f6dc9c' : '#e9dfc6';
   ctx.beginPath();
-  ctx.moveTo(14, 124);
-  ctx.lineTo(66, 124);
-  ctx.lineTo(56, 84);
-  ctx.lineTo(24, 84);
+  ctx.moveTo(744, 124);
+  ctx.lineTo(796, 124);
+  ctx.lineTo(786, 84);
+  ctx.lineTo(754, 84);
   ctx.fill();
 
   // Rug.
@@ -152,6 +155,10 @@ function drawRoom(ctx, world, dark, time) {
   ctx.ellipse(400, 404, 205, 25, 0, 0, Math.PI * 2);
   ctx.stroke();
 
+}
+
+// Things that stay in the room even when the backdrop is a photo.
+function drawFurniture(ctx, world) {
   // Bed.
   ctx.fillStyle = '#3f5f8a';
   ctx.beginPath();
@@ -163,6 +170,91 @@ function drawRoom(ctx, world, dark, time) {
   ctx.fill();
 
   drawBowl(ctx, world);
+  drawBag(ctx, BAG_X, GROUND);
+  drawJar(ctx, JAR_X, GROUND);
+}
+
+function drawBag(ctx, x, y) {
+  ctx.fillStyle = '#c99f62';
+  ctx.beginPath();
+  ctx.moveTo(x - 24, y);
+  ctx.lineTo(x - 21, y - 62);
+  ctx.lineTo(x + 21, y - 62);
+  ctx.lineTo(x + 24, y);
+  ctx.fill();
+  ctx.fillStyle = '#b58a4f';
+  ctx.beginPath();
+  ctx.moveTo(x - 21, y - 62);
+  ctx.lineTo(x - 17, y - 74);
+  ctx.lineTo(x + 17, y - 74);
+  ctx.lineTo(x + 21, y - 62);
+  ctx.fill();
+  ctx.fillStyle = '#f3ead8';
+  ctx.beginPath();
+  ctx.roundRect(x - 15, y - 48, 30, 26, 4);
+  ctx.fill();
+  ctx.fillStyle = '#8a5a32';
+  for (const [dx, dy] of [[-6, -38], [0, -32], [6, -38], [-3, -28], [4, -27]]) {
+    ctx.beginPath();
+    ctx.arc(x + dx, y + dy, 2.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawBone(ctx, x, y, size = 1, angle = 0) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.scale(size, size);
+  ctx.fillStyle = '#c98a4a';
+  ctx.strokeStyle = 'rgba(90, 50, 15, 0.7)';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.roundRect(-7, -2.5, 14, 5, 2);
+  for (const [dx, dy] of [[-7, -2.5], [-7, 2.5], [7, -2.5], [7, 2.5]]) {
+    ctx.moveTo(dx + 3, dy);
+    ctx.arc(dx, dy, 3, 0, Math.PI * 2);
+  }
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawJar(ctx, x, y) {
+  ctx.fillStyle = 'rgba(220, 235, 240, 0.65)';
+  ctx.strokeStyle = 'rgba(90, 110, 120, 0.5)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.roundRect(x - 15, y - 42, 30, 42, 7);
+  ctx.fill();
+  ctx.stroke();
+  drawBone(ctx, x - 4, y - 10, 0.9, 0.3);
+  drawBone(ctx, x + 5, y - 20, 0.9, -0.5);
+  drawBone(ctx, x - 3, y - 29, 0.9, 0.1);
+  ctx.fillStyle = '#c4473a';
+  ctx.beginPath();
+  ctx.roundRect(x - 17, y - 50, 34, 10, 3);
+  ctx.fill();
+}
+
+function drawScoop(ctx, x, y) {
+  ctx.strokeStyle = '#8f99a3';
+  ctx.lineWidth = 5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x - 6, y - 4);
+  ctx.lineTo(x - 26, y - 14);
+  ctx.stroke();
+  ctx.fillStyle = '#b8c2cc';
+  ctx.beginPath();
+  ctx.ellipse(x + 6, y + 2, 14, 10, 0.25, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#8a5a32';
+  for (const [dx, dy] of [[0, -3], [6, -4], [11, -1], [4, 1]]) {
+    ctx.beginPath();
+    ctx.arc(x + dx, y + dy, 2.8, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 function drawBowl(ctx, world) {
@@ -197,7 +289,7 @@ function hash(i) {
 }
 
 function drawPark(ctx, world, dark, time) {
-  const off = world.walk.offset;
+  const off = world.cam;
   drawSky(ctx, 0, 0, VIEW_W, 300, dark, time);
 
   // Far hills.
@@ -251,9 +343,6 @@ function drawPark(ctx, world, dark, time) {
     ctx.lineTo(x + 3, y - 9);
     ctx.stroke();
   }
-
-  const c = world.walk.critter;
-  if (c) drawCritter(ctx, c, c.x - off, time);
 }
 
 function drawCritter(ctx, c, x, time) {
@@ -285,18 +374,6 @@ function drawCritter(ctx, c, x, time) {
   }
 }
 
-function drawLeash(ctx, world) {
-  const b = world.body;
-  const s = world.scale;
-  const collar = { x: b.x + b.dir * 40 * s, y: GROUND - b.jump - 72 * s };
-  ctx.strokeStyle = shade(world.pet.look.collar ?? '#d0443c', -0.1);
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.moveTo(collar.x, collar.y);
-  ctx.quadraticCurveTo(b.x - 90, collar.y + 30, b.x - 210, 150);
-  ctx.stroke();
-}
-
 function drawHeart(ctx, x, y, size) {
   ctx.beginPath();
   ctx.moveTo(x, y + size * 0.35);
@@ -315,38 +392,92 @@ function drawParticles(ctx, world) {
       ctx.fillStyle = `rgba(70, 80, 120, ${a})`;
       ctx.font = `700 ${14 + p.age * 6}px Grandstander, system-ui, sans-serif`;
       ctx.fillText('z', p.x + p.age * 10, p.y);
+    } else if (p.type === 'kibble') {
+      ctx.fillStyle = '#8a5a32';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2.8, 0, Math.PI * 2);
+      ctx.fill();
     } else if (p.type === 'crumb') {
       ctx.fillStyle = `rgba(138, 90, 50, ${a})`;
       ctx.beginPath();
-      ctx.arc(p.x, p.y + 40, 2.5, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y + 12, 2.5, 0, Math.PI * 2);
       ctx.fill();
     }
   }
 }
 
-function drawBubble(ctx, world) {
-  if (!world.bubble) return;
-  const head = world.headPoint();
-  ctx.font = '700 16px Grandstander, system-ui, sans-serif';
-  const text = world.bubble.text;
-  const w = ctx.measureText(text).width + 22;
+function drawBubble(ctx, text, ax, ay, tone = 'pet') {
+  ctx.font = tone === 'pet' ? '700 16px Grandstander, system-ui, sans-serif' : '600 15px Figtree, system-ui, sans-serif';
+  const shown = text.length > 42 ? `${text.slice(0, 40)}…` : text;
+  const w = ctx.measureText(shown).width + 22;
   const h = 30;
-  const x = Math.min(VIEW_W - w - 8, Math.max(8, head.x - w / 2));
-  const y = Math.max(8, head.y - 62);
-  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  const x = Math.min(VIEW_W - w - 8, Math.max(8, ax - w / 2));
+  const y = Math.max(8, ay - h - 10);
+  ctx.fillStyle = tone === 'pet' ? 'rgba(255,255,255,0.95)' : 'rgba(31, 42, 36, 0.88)';
   ctx.strokeStyle = 'rgba(30,40,35,0.25)';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.roundRect(x, y, w, h, 14);
-  ctx.moveTo(head.x - 6, y + h);
-  ctx.lineTo(head.x, y + h + 9);
-  ctx.lineTo(head.x + 6, y + h);
+  ctx.moveTo(ax - 6, y + h);
+  ctx.lineTo(ax, y + h + 9);
+  ctx.lineTo(ax + 6, y + h);
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = '#1f2a24';
+  ctx.fillStyle = tone === 'pet' ? '#1f2a24' : '#f4f7f4';
   ctx.textBaseline = 'middle';
-  ctx.fillText(text, x + 11, y + h / 2 + 1);
+  ctx.fillText(shown, x + 11, y + h / 2 + 1);
   ctx.textBaseline = 'alphabetic';
+}
+
+// A photo as the backdrop. On walks it scrolls slowly with the camera,
+// mirrored at the seams, so any snapshot becomes a place to walk through.
+function drawPhoto(ctx, img, cam = 0, scrolls = false) {
+  const k = scrolls ? VIEW_H / img.height : Math.max(VIEW_W / img.width, VIEW_H / img.height);
+  const w = img.width * k;
+  const h = img.height * k;
+  if (!scrolls) {
+    ctx.drawImage(img, (VIEW_W - w) / 2, (VIEW_H - h) / 2, w, h);
+  } else {
+    const off = cam * 0.45;
+    const first = Math.floor(off / w);
+    for (let i = first; i * w - off < VIEW_W; i++) {
+      const x = i * w - off;
+      ctx.save();
+      if (i % 2 !== 0) {
+        ctx.translate(x + w, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(img, 0, 0, w, h);
+      } else ctx.drawImage(img, x, 0, w, h);
+      ctx.restore();
+    }
+  }
+  // Settle the characters onto the ground.
+  const g = ctx.createLinearGradient(0, 300, 0, VIEW_H);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(0,0,0,0.22)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 300, VIEW_W, VIEW_H - 300);
+}
+
+function collarPoint(world) {
+  const head = world.headPoint();
+  const s = world.scale;
+  return { x: head.x - world.body.dir * 20 * s, y: head.y + 22 * s };
+}
+
+// The leash sags when slack and pulls straight when tight.
+function drawLeash(ctx, world, hand) {
+  const c = collarPoint(world);
+  const tension = world.walk.tension;
+  const span = Math.hypot(c.x - hand.x, c.y - hand.y);
+  const sag = Math.max(0, (LEASH * 1.15 - span) * 0.5) * (1 - tension);
+  ctx.strokeStyle = world.pet.look.collar ?? '#d0443c';
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(hand.x, hand.y);
+  ctx.quadraticCurveTo((hand.x + c.x) / 2, (hand.y + c.y) / 2 + sag, c.x, c.y);
+  ctx.stroke();
 }
 
 function drawNight(ctx, world, dark) {
@@ -354,7 +485,7 @@ function drawNight(ctx, world, dark) {
   ctx.fillStyle = `rgba(18, 24, 58, ${dark * 0.42})`;
   ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   if (world.scene === 'home') {
-    const g = ctx.createRadialGradient(40, 120, 10, 40, 140, 420);
+    const g = ctx.createRadialGradient(770, 120, 10, 770, 140, 420);
     g.addColorStop(0, `rgba(255, 214, 150, ${dark * 0.32})`);
     g.addColorStop(1, 'rgba(255, 214, 150, 0)');
     ctx.fillStyle = g;
@@ -362,35 +493,62 @@ function drawNight(ctx, world, dark) {
   }
 }
 
-export function render(ctx, world, { date = new Date(), time = world.time } = {}) {
+export function render(ctx, world, { date = new Date(), time = world.time, backdrops = {} } = {}) {
   const dark = darkness(date);
-  if (world.scene === 'park') drawPark(ctx, world, dark, time);
-  else drawRoom(ctx, world, dark, time);
+  const home = world.scene === 'home';
+  const photo = home ? backdrops.home : backdrops.walk;
+  if (photo) drawPhoto(ctx, photo, world.cam, !home);
+  else if (home) drawRoom(ctx, world, dark, time);
+  else drawPark(ctx, world, dark, time);
 
+  ctx.save();
+  ctx.translate(-world.cam, 0);
+
+  if (home) drawFurniture(ctx, world);
   const ball = world.ball;
-  if (world.scene === 'home' && ball.state === 'ground') {
+  if (home && ball.state === 'ground') {
     ctx.fillStyle = 'rgba(40,30,20,0.18)';
     ctx.beginPath();
     ctx.ellipse(ball.x, GROUND, 9, 3, 0, 0, Math.PI * 2);
     ctx.fill();
     drawBall(ctx, ball.x, ball.y, BALL_R, ball.spin);
   }
+  if (world.floorTreat) drawBone(ctx, world.floorTreat.x, world.floorTreat.y, 1.2, 0.2);
+  if (world.walk?.critter) drawCritter(ctx, world.walk.critter, world.walk.critter.x, time);
+
+  // The owner stands behind the pet. On walks the leash hand reaches toward the pet.
+  const o = world.owner;
+  let hand = o.hand;
+  if (!home && !hand) {
+    const toward = Math.sign(world.body.x - o.x) || o.dir;
+    const pull = world.walk.tension;
+    hand = { x: o.x + toward * (34 + pull * 24), y: GROUND - 150 + pull * 20 };
+  }
+  const handPos = drawOwner(ctx, world.pet.owner, {
+    x: o.x, dir: o.dir, phase: o.phase, speed: o.speed, crouch: o.crouch, time, hand,
+  }, GROUND);
 
   const b = world.body;
-  if (world.scene === 'park') drawLeash(ctx, world);
   drawPet(ctx, world.pet, {
     x: b.x, y: GROUND - b.jump, jump: b.jump, scale: world.scale, dir: b.dir, pose: b.pose,
     gait: b.gait, speed: b.speed, wagPhase: b.wagPhase, time,
     holdingBall: ball.state === 'mouth',
   });
+  if (!home) drawLeash(ctx, world, handPos);
 
-  if (world.scene === 'home' && ball.state === 'air') {
-    // Grow the ball as it flies in from the viewer's side.
-    const r = BALL_R * (1 + Math.max(0, (ball.y - (GROUND - BALL_R)) / 120));
-    drawBall(ctx, ball.x, Math.min(ball.y, VIEW_H - r), r, ball.spin);
-  }
+  // Whatever is in the owner's hand.
+  const d = world.drag;
+  if (d?.item === 'scoop') drawScoop(ctx, d.x, d.y);
+  if (d?.item === 'treat') drawBone(ctx, d.x, d.y, 1.7, -0.3);
+  if (home && (ball.state === 'air' || ball.state === 'drag')) drawBall(ctx, ball.x, ball.y, BALL_R, ball.spin);
 
   drawParticles(ctx, world);
+  ctx.restore();
+
   drawNight(ctx, world, dark);
-  drawBubble(ctx, world);
+  if (world.bubble) {
+    const head = world.headPoint();
+    drawBubble(ctx, world.bubble.text, head.x - world.cam, head.y - 26 * world.scale, 'pet');
+  }
+  if (o.bubble) drawBubble(ctx, o.bubble.text, o.x - world.cam + o.dir * 10, GROUND - 330 + o.crouch * 52, 'owner');
 }

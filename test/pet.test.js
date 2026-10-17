@@ -120,3 +120,66 @@ test('feeding a hungry pet sends it to the bowl', () => {
   assert.ok(pet.needs.fullness > 60);
   assert.equal(pet.memory.stats.meals, 1);
 });
+
+test('a flung ball flies, bounces and comes to rest on the floor', () => {
+  const w = new World(dog(), { rng: () => 0.99 });
+  w.grab('ball', 500, 250);
+  w.dragTo(520, 240);
+  w.release(600, -400);
+  assert.equal(w.ball.state, 'air');
+  let maxX = 0;
+  let minY = Infinity;
+  for (let i = 0; i < 400; i++) {
+    w.update(0.02);
+    maxX = Math.max(maxX, w.ball.x);
+    minY = Math.min(minY, w.ball.y);
+  }
+  assert.ok(minY < 240, 'ball rises after an upward fling');
+  assert.ok(w.ball.x < 800 && w.ball.x > 0, 'walls keep the ball in the room');
+  assert.ok(['ground', 'mouth'].includes(w.ball.state));
+});
+
+test('pouring from the scoop fills the bowl only while over it', () => {
+  const pet = dog();
+  const w = new World(pet, { rng: () => 0.5 });
+  w.grab('scoop', 40, 340);
+  w.dragTo(400, 250);
+  w.update(1);
+  assert.equal(pet.bowlGrams, 0);
+  w.dragTo(150, 320);
+  for (let i = 0; i < 20; i++) w.update(0.05);
+  assert.ok(pet.bowlGrams > 50);
+  w.release();
+  assert.equal(w.drag, null);
+});
+
+test('a treat held high lures a sit, and handing it over teaches sit', () => {
+  const pet = dog();
+  const w = new World(pet, { rng: () => 0.1 });
+  w.body.x = 400;
+  w.grab('treat', 470, 200);
+  assert.equal(w.activity.type, 'lure');
+  for (let i = 0; i < 60; i++) { w.dragTo(470, 200); w.update(0.05); }
+  assert.ok(w.body.pose.sit > 0.7);
+  const before = pet.memory.tricks.sit;
+  const mouth = w.mouthPoint();
+  w.dragTo(mouth.x, mouth.y);
+  w.release();
+  assert.ok(pet.memory.tricks.sit > before);
+  assert.equal(w.activity.type, 'treat');
+});
+
+test('on a walk the leash keeps the pet within reach', () => {
+  const pet = dog();
+  const w = new World(pet, { rng: () => 0.5 });
+  w.startWalk();
+  w.setWalkInput(1);
+  for (let i = 0; i < 400; i++) {
+    w.update(0.05);
+    assert.ok(Math.abs(w.body.x - w.owner.x) <= 171);
+  }
+  assert.ok(w.walk.distance > 1000);
+  const r = w.endWalk();
+  assert.ok(r.meters > 20);
+  assert.equal(w.scene, 'home');
+});

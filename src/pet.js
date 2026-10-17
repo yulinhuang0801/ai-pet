@@ -1,5 +1,8 @@
 // Pet model: who the pet is (look, personality) and how it is doing (needs,
-// bond, memory). Pure data + pure functions so it can be tested in Node.
+// bond, memory), plus its owner and their places. Pure data + pure functions
+// so it can be tested in Node.
+
+import { defaultOwner } from './owner.js';
 
 export const SAVE_VERSION = 1;
 
@@ -83,7 +86,7 @@ export function defaultTraits(species) {
     : { energy: 0.65, playful: 0.75, cuddly: 0.7, stubborn: 0.3 };
 }
 
-export function createPet({ name, species, look, traits }, now = Date.now()) {
+export function createPet({ name, species, look, traits, owner }, now = Date.now()) {
   return {
     version: SAVE_VERSION,
     name: (name || '').trim() || (species === 'cat' ? 'Miso' : 'Mochi'),
@@ -92,6 +95,9 @@ export function createPet({ name, species, look, traits }, now = Date.now()) {
     lastSeen: now,
     look: { ...defaultLook(species), ...look },
     traits: { ...defaultTraits(species), ...traits },
+    owner: { ...defaultOwner(), ...owner },
+    // Which backdrop is home: 'room' or the id of one of the owner's photos.
+    home: 'room',
     needs: { fullness: 70, energy: 80, fun: 55, affection: 50 },
     bond: 5,
     bowlGrams: 0,
@@ -229,6 +235,7 @@ export function deserialize(json) {
     ...fresh,
     ...data,
     needs: { ...fresh.needs, ...data.needs },
+    owner: { ...fresh.owner, ...data.owner },
     memory: {
       ...fresh.memory,
       ...data.memory,

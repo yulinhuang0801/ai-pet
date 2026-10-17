@@ -231,8 +231,8 @@ input[type="text"], #pet-name, #talk-input {
 .play { display: grid; gap: 12px; min-width: 0; }
 
 .stage { position: relative; }
-#scene { touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
-#scene.petting { cursor: grabbing; }
+#scene { touch-action: none; user-select: none; -webkit-user-select: none; }
+#scene.grabbing { cursor: grabbing !important; }
 
 .status {
   position: absolute;
@@ -272,7 +272,70 @@ input[type="text"], #pet-name, #talk-input {
   font-size: 0.7rem; font-weight: 700; color: var(--muted);
   border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; line-height: 1.5;
 }
-.hint { margin: 0; color: var(--muted); font-size: 0.88rem; }
+.hint { margin: 0; color: var(--muted); font-size: 0.88rem; min-height: 2.6em; }
+
+.walk-stat {
+  align-self: center; margin-left: auto; color: var(--muted);
+  font-size: 0.88rem; font-variant-numeric: tabular-nums;
+}
+button.hold { touch-action: none; user-select: none; -webkit-user-select: none; }
+
+button.small { padding: 4px 10px; font-size: 0.82rem; }
+
+.file-button { position: relative; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.file-button input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+.card > .file-button {
+  justify-self: start;
+  border: 1px solid var(--line); border-radius: 999px; padding: 8px 16px; font-weight: 600;
+}
+.file-button:focus-within { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
+label.small.file-button {
+  border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; font-size: 0.82rem; font-weight: 600;
+}
+
+/* Places */
+.places-picker {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+.picker-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.place-grid {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px;
+}
+.place-tile {
+  width: 100%; display: grid; gap: 6px; padding: 6px; border-radius: 12px;
+  text-align: left; background: var(--surface-2); font-weight: 600; font-size: 0.88rem;
+}
+.place-tile img, .place-tile .thumb-art { width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; object-fit: cover; }
+.place-tile.add { border: 1px dashed var(--line); cursor: pointer; position: relative; }
+.thumb-art { display: block; background: var(--surface-2); }
+.thumb-art.park { background: linear-gradient(#9fc9ec 0 45%, #8dbd6e 45% 70%, #d8c6a0 70% 85%, #8dbd6e 85%); }
+.thumb-art.room { background: linear-gradient(#d3ddcc 0 62%, #c79a64 62%); }
+.thumb-art.plus { display: grid; place-items: center; font-size: 1.8rem; color: var(--muted); }
+
+.place-list, .voice-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.place-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 4px 10px; align-items: center; }
+.place-row img, .place-row .thumb-art { width: 64px; aspect-ratio: 16 / 9; border-radius: 6px; object-fit: cover; grid-row: span 2; }
+.place-info { display: grid; min-width: 0; }
+.place-name {
+  border: 1px solid transparent; background: transparent; border-radius: 6px;
+  padding: 1px 4px; margin-left: -4px; font-weight: 600; min-width: 0; width: 100%;
+}
+.place-name:not(:disabled):hover, .place-name:focus { border-color: var(--line); background: var(--surface-2); }
+.place-name:disabled { color: var(--ink); opacity: 1; }
+.place-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.place-row .place-actions { grid-column: 2; }
+.voice-row { display: grid; gap: 6px; }
+.voice-row > div:first-child { display: flex; justify-content: space-between; gap: 8px; font-size: 0.92rem; font-weight: 600; }
+.voice-row .meta { font-weight: 400; }
+
+.sublabel { font-size: 0.82rem; color: var(--muted); }
+.field.you { gap: 12px; }
 
 .talk { display: flex; gap: 8px; }
 .talk input { flex: 1; }
