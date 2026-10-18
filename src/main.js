@@ -307,6 +307,7 @@ function showHome() {
   renderPanel();
   renderPlaces();
   renderVoices();
+  if (location.hash === '#map') openPlanner();
 }
 
 function toast(text, kind = '') {
@@ -630,11 +631,14 @@ const planner = new RoutePlanner({
 function openPlanner() {
   $('place-picker').hidden = true;
   planner.open();
-  $('map-panel').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  $('map-panel').scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 
 $('map-close').addEventListener('click', () => planner.close());
 $('plan-route').addEventListener('click', () => openPlanner());
+$('act-map').addEventListener('click', () => openPlanner());
+// A link ending in #map opens the planner straight away.
+window.addEventListener('hashchange', () => { if (location.hash === '#map' && !$('home').hidden) openPlanner(); });
 
 $('place-file').addEventListener('change', async (e) => {
   await addPlace(e.target.files[0]);
