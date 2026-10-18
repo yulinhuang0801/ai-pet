@@ -308,6 +308,9 @@ export const sideSpace = {
     this.owner.targetX = clampX(x);
   },
 
+  // On walks: which way a point is from the owner, 1 onward or -1 back.
+  walkDirToward(point) { return point.x >= this.owner.x ? 1 : -1; },
+
   // --- Walks ---
 
   walkedMeters() { return this.walk.distance / UNITS_PER_METER; },
@@ -356,7 +359,7 @@ export const sideSpace = {
     const o = this.owner;
     if (this.scene === 'park') {
       const resisting = this.walk.tension > 0.8 && ['flop', 'sniff'].includes(this.activity.phase) && Math.sign(this.body.x - o.x) !== o.walkInput;
-      o.vx = o.walkInput * OWNER_WALK_SPEED * (resisting ? 0.45 : 1);
+      o.vx = o.walkInput * OWNER_WALK_SPEED * (o.jog ? 1.8 : 1) * (resisting ? 0.45 : 1);
       if (o.walkInput) o.dir = o.walkInput;
       const step = Math.abs(o.vx * dt);
       this.walk.distance += step;

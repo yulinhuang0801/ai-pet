@@ -1,15 +1,67 @@
 // The route planner: a real map where the owner searches for a place, clicks
 // out a route, and the app fetches what lies along it from OpenStreetMap to
-// build a walk. Map tiles come from openstreetmap.org, place search from
-// Nominatim and map data from the Overpass API, so this needs the app to be
-// on a site that can reach them (not every preview can).
+// build a walk. Clicks are joined along real streets and footpaths, not in
+// straight lines through houses. Map tiles come from openstreetmap.org, place
+// search from Nominatim, walking routes from the FOSSGIS routing server and
+// map data from the Overpass API, so this needs the app to be on a site that
+// can reach them (not every preview can).
 
 import { overpassQuery, buildWalk, describeWalk, routeLength, BIOMES } from './route.js';
+import { pathsQuery, pathGraph, findPath, loopPoints } from './paths.js';
 
 const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const SEARCH = 'https://nominatim.openstreetmap.org/search';
 const OVERPASS = 'https://overpass-api.de/api/interpreter';
+const ROUTER = 'https://routing.openstreetmap.de/routed-foot/route/v1/driving';
 const MAX_METRES = 5000;
+
+async function overpass(query) {
+  const res = await fetch(OVERPASS, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `data=${encodeURIComponent(query)}`,
+  });
+  if (!res.ok) throw new Error(res.status === 429 ? 'The map data service is busy. Wait a minute and try again.' : 'The map data service didn’t answer.');
+  return res.json();
+}
+
+// A walking route through some [lat, lon] points, as [lat, lon] points along
+// real streets and paths. Asks the routing server, then falls back to
+// finding paths in map data; null if neither works.
+async function walkingRoute(points) {
+  try {
+    const coords = points.map(([lat, lon]) => `${lon.toFixed(6)},${lat.toFixed(6)}`).join(';');
+    const res = await fetch(`${ROUTER}/${coords}?overview=full&geometries=geojson`);
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    const line = data.routes?.[0]?.geometry?.coordinates;
+    if (data.code === 'Ok' && line?.length >= 2) return line.map(([lon, lat]) => [lat, lon]);
+  } catch { /* try the map data instead */ }
+  try {
+    const graph = pathGraph(await overpass(pathsQuery(points)));
+    const out = [];
+    for (let i = 1; i < points.length; i++) {
+      const leg = findPath(graph, points[i - 1], points[i]);
+      if (!leg) return null;
+      out.push(...(out.length ? leg.slice(1) : leg));
+    }
+    return out.length >= 2 ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+// Joins legs end to end, dropping the point where each meets the next.
+function joinLegs(legs) {
+  const out = [];
+  for (const leg of legs) {
+    for (const p of leg) {
+      const last = out[out.length - 1];
+      if (!last || last[0] !== p[0] || last[1] !== p[1]) out.push(p);
+    }
+  }
+  return out;
+}
 
 export const BIOME_COLOURS = {
   park: '#6fae57', woods: '#3f6b3a', water: '#4f8fd0', beach: '#e2c27a', street: '#9a8f86', town: '#c4673a',
@@ -17,12 +69,20 @@ export const BIOME_COLOURS = {
 
 const fmt = (m) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`);
 
+// Builds a route saved earlier again, with the map around it as it is now.
+export async function rebuildRoute(route) {
+  return buildWalk(route.points, await overpass(overpassQuery(route.points)), { waypoints: route.waypoints });
+}
+
 export class RoutePlanner {
   constructor(els, { onSave, toast }) {
     this.els = els;
     this.onSave = onSave;
     this.toast = toast;
-    this.points = [];
+    // The points clicked, and the way between each one and the one before.
+    this.waypoints = [];
+    this.legs = [];
+    this.busy = false;
     this.walk = null;
     this.placeName = '';
     this.bind();
@@ -32,8 +92,9 @@ export class RoutePlanner {
     const e = this.els;
     e.search.addEventListener('submit', (ev) => { ev.preventDefault(); this.search(e.query.value.trim()); });
     e.locate.addEventListener('click', () => this.locate());
-    e.undo.addEventListener('click', () => { this.points.pop(); this.changed(); });
-    e.clear.addEventListener('click', () => { this.points = []; this.changed(); });
+    e.undo.addEventListener('click', () => { this.waypoints.pop(); this.legs.pop(); this.changed(); });
+    e.clear.addEventListener('click', () => { this.waypoints = []; this.legs = []; this.changed(); });
+    e.loop.addEventListener('click', () => this.suggestLoop());
     e.build.addEventListener('click', () => this.build());
     e.save.addEventListener('click', () => this.save());
   }
@@ -61,17 +122,65 @@ export class RoutePlanner {
         }
       })
       .addTo(this.map);
+    this.map.attributionControl.addAttribution('Walking routes: <a href="https://routing.openstreetmap.de/about.html" target="_blank" rel="noopener">FOSSGIS</a>');
     this.line = L.polyline([], { color: '#1d6d64', weight: 5, opacity: 0.85 }).addTo(this.map);
     this.dots = L.layerGroup().addTo(this.map);
-    this.map.on('click', (ev) => {
-      this.points.push([ev.latlng.lat, ev.latlng.lng]);
-      this.changed();
-    });
+    this.map.on('click', (ev) => this.addPoint([ev.latlng.lat, ev.latlng.lng]));
     this.changed();
     this.locate(true);
   }
 
   close() { this.els.panel.hidden = true; }
+
+  // The whole route so far, as [lat, lon] points.
+  get points() { return joinLegs(this.legs); }
+
+  async addPoint(p) {
+    if (this.busy) return;
+    const prev = this.waypoints[this.waypoints.length - 1];
+    this.waypoints.push(p);
+    if (!prev) { this.legs.push([p]); this.changed(); return; }
+    // The first leg replaces the starting click with where the path really starts.
+    if (this.legs.length === 1) this.legs = [];
+    if (!this.els.snap.checked) { this.legs.push([prev, p]); this.changed(); return; }
+    this.setBusy('Finding a way you can walk…');
+    const path = await walkingRoute([prev, p]);
+    this.setBusy(null);
+    if (path) this.legs.push(path);
+    else {
+      this.legs.push([prev, p]);
+      this.notice('Couldn’t find a path between those points, so that part is a straight line.');
+    }
+    this.changed();
+  }
+
+  // A round walk of about the chosen length from the first point (or the
+  // middle of the map), along real streets and paths. Press again for another.
+  async suggestLoop() {
+    if (this.busy || !this.map) return;
+    const c = this.map.getCenter();
+    const start = this.waypoints[0] ?? [c.lat, c.lng];
+    const metres = Number(this.els.loopLength.value);
+    this.setBusy('Looking for a loop…');
+    const path = await walkingRoute(loopPoints(start, metres));
+    this.setBusy(null);
+    if (!path) {
+      this.changed();
+      this.notice('Couldn’t find a loop here. Try somewhere else, or click out your own route.');
+      return;
+    }
+    this.notice('');
+    this.waypoints = [path[0], path[path.length - 1]];
+    this.legs = [path];
+    this.changed();
+    this.map.fitBounds(this.line.getBounds(), { padding: [20, 20] });
+  }
+
+  setBusy(text) {
+    this.busy = Boolean(text);
+    if (text) this.els.distance.textContent = text;
+    for (const b of [this.els.loop, this.els.undo, this.els.clear, this.els.build]) b.disabled = this.busy || b.disabled;
+  }
 
   notice(text) {
     this.els.notice.textContent = text;
@@ -82,21 +191,23 @@ export class RoutePlanner {
     this.walk = null;
     this.els.result.hidden = true;
     const L = this.L;
+    const points = this.points;
     if (L) {
-      this.line.setLatLngs(this.points);
+      this.line.setLatLngs(points);
       this.dots.clearLayers();
-      this.points.forEach((p, i) => {
-        const end = i === this.points.length - 1 && i > 0;
+      this.waypoints.forEach((p, i) => {
+        const end = i === this.waypoints.length - 1 && i > 0;
         L.circleMarker(p, { radius: i === 0 || end ? 7 : 4, color: '#fff', weight: 2, fillColor: i === 0 ? '#1d6d64' : end ? '#1f2a24' : '#5cc4b4', fillOpacity: 1 }).addTo(this.dots);
       });
     }
-    const len = this.points.length > 1 ? routeLength(this.points) : 0;
-    this.els.distance.textContent = this.points.length === 0
-      ? 'Click the map where your walk starts, then click along the paths you’d take.'
-      : this.points.length === 1 ? 'Now click along your route.' : `Your route: ${fmt(len)}`;
-    this.els.undo.disabled = this.points.length === 0;
-    this.els.clear.disabled = this.points.length === 0;
-    this.els.build.disabled = this.points.length < 2 || len > MAX_METRES;
+    const len = points.length > 1 ? routeLength(points) : 0;
+    this.els.distance.textContent = this.waypoints.length === 0
+      ? 'Click where your walk starts, then where you want to go. The route follows real streets and paths.'
+      : this.waypoints.length === 1 ? 'Now click where you want to go next.' : `Your route: ${fmt(len)}`;
+    this.els.undo.disabled = this.waypoints.length === 0;
+    this.els.clear.disabled = this.waypoints.length === 0;
+    this.els.loop.disabled = false;
+    this.els.build.disabled = points.length < 2 || len > MAX_METRES;
     if (len > MAX_METRES) this.els.distance.textContent += ` (keep it under ${fmt(MAX_METRES)})`;
   }
 
@@ -145,13 +256,8 @@ export class RoutePlanner {
     e.build.textContent = 'Looking at what’s along your route…';
     this.notice('');
     try {
-      const res = await fetch(OVERPASS, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `data=${encodeURIComponent(overpassQuery(this.points))}`,
-      });
-      if (!res.ok) throw new Error(res.status === 429 ? 'The map data service is busy. Wait a minute and try again.' : 'The map data service didn’t answer.');
-      this.walk = buildWalk(this.points, await res.json());
+      const points = this.points;
+      this.walk = buildWalk(points, await overpass(overpassQuery(points)), { waypoints: this.waypoints });
       this.showResult();
     } catch (err) {
       this.notice(err.message?.startsWith('The map') ? err.message : 'Couldn’t fetch what’s along your route. Check your connection and try again.');
@@ -180,7 +286,8 @@ export class RoutePlanner {
     if (!this.walk) return;
     const name = this.els.name.value.trim() || 'My route';
     this.onSave({ name, route: this.walk });
-    this.points = [];
+    this.waypoints = [];
+    this.legs = [];
     this.changed();
     this.close();
   }

@@ -20,6 +20,7 @@ import { pickFind, collect, findById } from './finds.js';
 import { parseUtterance } from './commands.js';
 import { LANDMARKS } from './route.js';
 import { sideSpace } from './space-side.js';
+import { mapSpace } from './space-map.js';
 
 const POSES = {
   stand: { sit: 0, lie: 0, head: 0, eyes: 0, mouth: 0, ears: 0.55, tailUp: 0.55, wag: 0.15, paw: 0, tilt: 0, groom: 0, chew: 0, crouch: 0 },
@@ -61,7 +62,7 @@ export const SPACE_CONTRACT = [
   // the ball, treats and food
   'ballLanding', 'canGrab', 'shouldLeap', 'dropBall', 'batBall', 'launchBall', 'lobBallTo', 'dropTreat', 'overBowl',
   // the owner's hands
-  'hitTest', 'reachFor', 'walkOwnerTo',
+  'hitTest', 'reachFor', 'walkOwnerTo', 'walkDirToward',
   // walks
   'walkedMeters', 'spawnFind', 'scheduleFind', 'spawnCritter', 'routeMeters', 'biomeHere', 'landmarkAhead',
   // each step
@@ -658,6 +659,7 @@ export class World {
     this.onSound = onSound;
     this.time = 0;
     this.scene = 'home';
+    this.space = sideSpace;
     this.cam = 0;
     this.scale = petScale(pet);
     this.body = {
@@ -1124,6 +1126,8 @@ export class World {
       find: null, nextFindAt: 0, offLeash: false,
       route: place.route ?? null, visited: new Set(), arrived: false,
     };
+    // A route with its map is walked from above; anywhere else, side-on.
+    this.space = place.route?.map ? mapSpace : sideSpace;
     this.scheduleFind(70, 140);
     this.placeForWalk();
     noteHabit(p, 'walks');
@@ -1136,6 +1140,9 @@ export class World {
 
   setWalkInput(dir) { this.owner.walkInput = this.scene === 'park' ? dir : 0; }
 
+  // Walk or jog.
+  setJog(on) { this.owner.jog = on; }
+
   endWalk() {
     if (this.scene !== 'park') return null;
     const meters = Math.round(this.walkedMeters());
@@ -1146,6 +1153,8 @@ export class World {
     if (stats.walks === 1) addJournal(this.pet, `First walk together: ${meters} m.`);
     this.scene = 'home';
     this.walk = null;
+    this.owner.jog = false;
+    this.space = sideSpace;
     this.placeBackHome();
     this.start('idle');
     return { meters, minutes };
@@ -1260,5 +1269,8 @@ export class World {
   }
 }
 
-// Where things are and how they move: the side-on room.
-Object.assign(World.prototype, sideSpace);
+// Where things are and how they move. Each method asks the space the world
+// is in right now: the side-on room, or a real route seen from above.
+for (const name of Object.keys(sideSpace)) {
+  World.prototype[name] = function (...args) { return this.space[name].apply(this, args); };
+}

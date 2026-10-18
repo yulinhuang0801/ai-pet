@@ -1,22 +1,23 @@
 # Architecture: what's core and what's view-specific
 
-The app is built in layers so the pet itself (its needs, personality, learning and behaviour) doesn't depend on how it's drawn. Today the main view is 2D and side-on. A real 3D version can be added later by writing a new **space** and a new **renderer**. The core layers stay as they are.
+The app is built in layers so the pet itself (its needs, personality, learning and behaviour) doesn't depend on how it's drawn. Today the main view is 2D: side-on at home, and seen from above on real map routes. Those are two **spaces** that the same behaviour runs in. A real 3D version can be added later the same way, by writing a new space and a new **renderer**. The core layers stay as they are.
 
 ```
  ┌──────────────────────────────────────────────────────────────────────┐
  │ Page (main.js): creator, buttons, side panel, pointer → world calls  │
  ├──────────────────────────────────────────────────────────────────────┤
  │ Views: renderer.js + pet-art.js + owner-art.js + finds-art.js (2D)   │  replace or add
- │        scene3d.js (3D preview)                                       │  for 3D
+ │        map-art.js (route walks from above), scene3d.js (3D preview)  │  for 3D
  ├──────────────────────────────────────────────────────────────────────┤
- │ Space: space-side.js, where things are and how they move             │  replace for 3D
- │        (positions, walking, physics, leash, hit tests)               │
+ │ Space: where things are and how they move (positions, walking,       │  add one for 3D
+ │        physics, leash, hit tests). space-side.js: the room, side-on; │
+ │        space-map.js: a real route, from above                        │
  ├──────────────────────────────────────────────────────────────────────┤
  │ Behaviour: world.js, activities, decisions, reactions to the owner,  │  unchanged
  │        learning and hearts hooks (asks the space questions)          │
  ├──────────────────────────────────────────────────────────────────────┤
  │ Core: pet.js, learning.js, bond.js, finds.js, commands.js,           │  unchanged
- │        owner-look.js, sound.js, media-store.js                       │
+ │        owner-look.js, route.js, route-map.js, paths.js               │
  └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -30,18 +31,20 @@ The app is built in layers so the pet itself (its needs, personality, learning a
 | `finds.js` | What can be found on walks, the collection | No |
 | `commands.js` | Understanding what you type or say | No |
 | `route.js` | Map routes: length, kinds of place along them, landmarks | No |
+| `route-map.js`, `paths.js` | The map saved with a route; walkable paths and loops | No |
 | `owner-look.js` | Your look options (hair, skin, clothes) | No, but 3D may add options |
 | `sound.js`, `media-store.js` | Voices, photos and clips | No |
 | `world.js` | The pet's behaviour: every activity, how it chooses, how it reacts to you | **No.** It asks the space instead of using coordinates |
 | `space-side.js` | Where things are and how they move in the side-on room | **Replaced** by a 3D space |
-| `renderer.js`, `pet-art.js`, `owner-art.js`, `finds-art.js`, `route-art.js` | 2D drawing | Kept for the 2D view; not used by 3D |
+| `space-map.js` | Where things are on a route walk seen from above (2D ground, the owner on the route) | No; a 3D route space could start from it |
+| `renderer.js`, `pet-art.js`, `owner-art.js`, `finds-art.js`, `route-art.js`, `map-art.js` | 2D drawing | Kept for the 2D view; not used by 3D |
 | `map-planner.js` | The map where routes are planned | No; it only produces route data |
 | `scene3d.js` | 3D drawing (preview) | **Rewritten** around the 3D space and better assets |
 | `main.js` | Page wiring and pointer input | **Small changes:** pointer → 3D picking, and choosing the space |
 
 ## The space contract
 
-The behaviour never touches coordinates. It asks the space. The full list is `SPACE_CONTRACT` in `world.js`, and a test fails if a space is missing any of it. In plain words:
+The behaviour never touches coordinates. It asks the space. The world holds the space it's in (`world.space`) and forwards each question to it: the side-on room normally, and the map space (`space-map.js`) on a route walk that has its map. The map space proves the idea: the same activities (trotting along, sniffing, chasing squirrels, checking out landmarks) run unchanged on a 2D ground plane. The full list is `SPACE_CONTRACT` in `world.js`, and a test fails if a space is missing any of it. In plain words:
 
 | Question or action | Side-on answer today | What a 3D space would do |
 | --- | --- | --- |
@@ -54,7 +57,7 @@ The behaviour never touches coordinates. It asks the space. The full list is `SP
 | `heldHigh(point)`, `heldLow(point)` (lure training) | Treat height versus head height | Same idea in 3D |
 | `launchBall()`, `ballLanding()`, `shouldLeap()`, `canGrab()`, `batBall()`, `dropBall()`, `lobBallTo()` | Hand-written 2D ball physics | A physics engine (for example Rapier) with real collisions |
 | `dropTreat()`, `overBowl()` | 2D positions | 3D positions |
-| `hitTest()`, `reachFor()`, `walkOwnerTo()` | What the pointer is over; the owner walks to reach | Raycasting onto models and furniture |
+| `hitTest()`, `reachFor()`, `walkOwnerTo()`, `walkDirToward()` | What the pointer is over; the owner walks to reach; which way a point is along the walk | Raycasting onto models and furniture |
 | `placeAtHome()`, `placeForWalk()`, `placeBackHome()` | Starting positions | Spawn points in the room or on the walk |
 | `walkedMeters()`, `spawnFind()`, `scheduleFind()`, `spawnCritter()` | Along the path | Along the route |
 | `routeMeters()`, `biomeHere()`, `landmarkAhead()` | Position along a real map route, the kind of place there, the next landmark | The same route data, laid out in 3D |
@@ -65,10 +68,10 @@ Distances the behaviour passes (`gap`, `dist`) are in pet-sized units: the space
 ## Checklist for a real 3D version
 
 1. **Pick the engine and assets.** Either stay on the web (three.js or Babylon.js, plus Rapier physics), or move to Unity or Godot. Budget for realistic dog and cat models with full animation sets, and use free realistic people such as Microsoft Rocketbox. (Unity would mean rewriting the code in C#, but this layering and the contract still apply.)
-2. **Write `space-3d.js`** implementing every method in `SPACE_CONTRACT` over a 3D room: floor positions, a heading angle instead of left or right, furniture with collision shapes, and physics for the ball. Then `class World3D extends World {}` and mix the 3D space into it, the same way `space-side.js` is mixed into `World`.
+2. **Write `space-3d.js`** implementing every method in `SPACE_CONTRACT` over a 3D room: floor positions, a heading angle instead of left or right, furniture with collision shapes, and physics for the ball. Then set `world.space` to it, the way route walks switch to `space-map.js`.
 3. **Store the room as data** (furniture, positions, sizes). `placeOf()` reads from it, and that same data is what a "design your home" feature edits.
 4. **Rewrite `scene3d.js`** to draw the 3D space, map the behaviour's poses (sit, lie, wag, paw...) to animation clips, and pick objects with the pointer.
-5. **Update `main.js`** to create `World3D` and route pointer input through 3D picking.
+5. **Update `main.js`** to choose the 3D space and route pointer input through 3D picking.
 6. Run the tests. The core and behaviour tests should pass unchanged; add tests for the new space.
 
 ## Known couplings that remain

@@ -179,7 +179,7 @@ function drawSetting(ctx, biome, cam, trees) {
   }
 }
 
-function sign(ctx, x, y, text) {
+export function sign(ctx, x, y, text) {
   ctx.font = '600 11px Figtree, system-ui, sans-serif';
   const w = ctx.measureText(text).width + 12;
   ctx.fillStyle = 'rgba(31, 42, 36, 0.82)';
@@ -192,8 +192,9 @@ function sign(ctx, x, y, text) {
   ctx.textBaseline = 'alphabetic';
 }
 
-function drawLandmark(ctx, lm, x) {
-  const y = PATH_TOP;
+// A landmark standing on the ground at (x, y), with its name on a sign above
+// unless `label` is false.
+export function drawLandmark(ctx, lm, x, y = PATH_TOP, label = true) {
   switch (lm.kind) {
     case 'bench':
       ctx.fillStyle = '#8a5a32';
@@ -263,8 +264,11 @@ function drawLandmark(ctx, lm, x) {
       ctx.fillStyle = '#3d3a36';
       ctx.fillRect(x - 2, y - 46, 4, 46);
   }
-  sign(ctx, x, y - (lm.kind === 'cafe' || lm.kind === 'restaurant' || lm.kind === 'ice_cream' ? 74 : 66), lm.name ?? LANDMARKS[lm.kind].label.replace(/^an? /, ''));
+  if (label) sign(ctx, x, y - landmarkHeight(lm), landmarkName(lm));
 }
+
+export const landmarkHeight = (lm) => (['cafe', 'restaurant', 'ice_cream'].includes(lm.kind) ? 74 : 66);
+export const landmarkName = (lm) => lm.name ?? LANDMARKS[lm.kind].label.replace(/^an? /, '');
 
 function post(ctx, x, label, finish) {
   ctx.fillStyle = '#3d3a36';

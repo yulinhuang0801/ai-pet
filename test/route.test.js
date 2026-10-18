@@ -77,7 +77,7 @@ test('walking a route visits its landmarks and ends at its end', async () => {
   w.startWalk({ id: 'r1', kind: 'route', name: 'Test loop', route: walk });
   w.setWalkInput(1);
   const statuses = new Set();
-  for (let i = 0; i < 6000 && !w.walk.arrived; i++) {
+  for (let i = 0; i < 12000 && !w.walk.arrived; i++) {
     w.update(0.05);
     statuses.add(w.status());
   }

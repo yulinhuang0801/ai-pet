@@ -204,7 +204,7 @@ function drawBag(ctx, x, y) {
   }
 }
 
-function drawBone(ctx, x, y, size = 1, angle = 0) {
+export function drawBone(ctx, x, y, size = 1, angle = 0) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);
@@ -348,9 +348,9 @@ function drawPark(ctx, world, dark, time) {
   }
 }
 
-function drawCritter(ctx, c, x, time) {
+export function drawCritter(ctx, c, x, time, ground = GROUND, birdY = 330) {
   if (c.kind === 'squirrel') {
-    const y = GROUND - 8 - Math.abs(Math.sin(time * 12)) * 6;
+    const y = ground - 8 - Math.abs(Math.sin(time * 12)) * 6;
     ctx.fillStyle = '#9a5b34';
     ctx.beginPath();
     ctx.ellipse(x, y, 13, 8, 0, 0, Math.PI * 2);
@@ -360,7 +360,7 @@ function drawCritter(ctx, c, x, time) {
     ctx.ellipse(x - 14, y - 12, 7, 14, -0.4, 0, Math.PI * 2);
     ctx.fill();
   } else {
-    const y = 330 - c.t * 40;
+    const y = birdY - c.t * 40;
     const flap = Math.sin(time * 18) * 6;
     ctx.fillStyle = '#4b4f5c';
     ctx.beginPath();
@@ -385,7 +385,7 @@ export function drawHeart(ctx, x, y, size) {
   ctx.fill();
 }
 
-function drawParticles(ctx, world) {
+export function drawParticles(ctx, world) {
   for (const p of world.particles) {
     const a = 1 - p.age / p.life;
     if (p.type === 'heart') {
@@ -463,14 +463,13 @@ function drawPhoto(ctx, img, cam = 0, scrolls = false) {
 }
 
 // An owner-supplied picture used as an object, fitted into a square.
-function drawImageItem(ctx, img, x, y, size) {
+export function drawImageItem(ctx, img, x, y, size) {
   const k = size / Math.max(img.width, img.height);
   ctx.drawImage(img, x - (img.width * k) / 2, y - (img.height * k) / 2, img.width * k, img.height * k);
 }
 
 // Something waiting to be found on a walk: a glint on the path.
-function drawSparkleFind(ctx, find, time) {
-  const y = GROUND - 8;
+export function drawSparkleFind(ctx, find, time, y = GROUND - 8) {
   drawFind(ctx, find.item.id, find.x, y, 0.9);
   const a = 0.5 + 0.5 * Math.sin(time * 5);
   ctx.strokeStyle = `rgba(255, 245, 190, ${0.4 + a * 0.6})`;
@@ -493,7 +492,7 @@ function collarPoint(world) {
 }
 
 // The leash sags when slack and pulls straight when tight.
-function drawLeash(ctx, world, hand) {
+export function drawLeash(ctx, world, hand) {
   const c = collarPoint(world);
   const tension = world.walk.tension;
   const span = Math.hypot(c.x - hand.x, c.y - hand.y);

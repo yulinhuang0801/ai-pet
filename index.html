@@ -141,6 +141,7 @@
       <div class="actions" role="toolbar" aria-label="Walking" id="walk-actions" hidden>
         <button type="button" id="walk-back" class="hold">Walk back</button>
         <button type="button" id="walk-on" class="hold primary">Walk on</button>
+        <button type="button" id="walk-jog" class="ghost" aria-pressed="false">Jog</button>
         <button type="button" id="walk-leash" class="ghost" hidden aria-pressed="true">Leash on</button>
         <span class="walk-stat" id="walk-stat"></span>
         <button type="button" id="walk-home">Head home</button>
@@ -166,6 +167,18 @@
           <button type="button" class="ghost" id="map-locate">Near me</button>
         </form>
         <ul class="map-results" id="map-results"></ul>
+        <div class="map-options">
+          <label class="check"><input type="checkbox" id="map-snap" checked> Stick to streets and paths</label>
+          <span class="map-loop">
+            <button type="button" class="ghost small" id="map-loop">Suggest a loop</button>
+            <label for="map-loop-length" class="sr-only">Loop length</label>
+            <select id="map-loop-length">
+              <option value="1000">1 km</option>
+              <option value="2000" selected>2 km</option>
+              <option value="3000">3 km</option>
+            </select>
+          </span>
+        </div>
         <p class="map-notice" id="map-notice" hidden></p>
         <div class="map" id="map"></div>
         <div class="map-tools">

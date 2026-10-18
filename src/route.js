@@ -3,6 +3,8 @@
 // functions over OpenStreetMap data (the JSON an Overpass "out geom" query
 // returns), so this works the same in any view and can be tested offline.
 
+import { simplify, stitchRings, extractMap } from './route-map.js';
+
 export const BIOMES = {
   park: { label: 'park' },
   woods: { label: 'woods' },
@@ -58,22 +60,27 @@ export function bbox(points, pad = 80) {
   return [Math.min(...lats) - dLat, Math.min(...lons) - dLon, Math.max(...lats) + dLat, Math.max(...lons) + dLon];
 }
 
-// The Overpass query for everything the walk scene is built from.
-export function overpassQuery(points) {
-  const b = bbox(points).map((v) => v.toFixed(6)).join(',');
-  return `[out:json][timeout:25];
+// The route, thinned out to at most about `max` points, for queries.
+function thinned(points, max = 80) {
+  const project = projector(points[0]);
+  const pts = points.map((p, i) => Object.assign(project(p), { i }));
+  let kept = pts;
+  for (let tol = 2; kept.length > max; tol *= 2) kept = simplify(pts, tol);
+  return kept.map((xy) => points[xy.i]);
+}
+
+// The Overpass query for everything the walk is built from and drawn with:
+// whatever lies within `radius` metres of the route.
+export function overpassQuery(points, radius = 90) {
+  const around = `(around:${radius},${thinned(points).map(([lat, lon]) => `${lat.toFixed(6)},${lon.toFixed(6)}`).join(',')})`;
+  return `[out:json][timeout:40];
 (
-  way["leisure"~"^(park|garden|dog_park|playground|recreation_ground|common|nature_reserve)$"](${b});
-  relation["leisure"~"^(park|garden|nature_reserve)$"](${b});
-  way["landuse"~"^(grass|meadow|village_green|recreation_ground|forest|residential|commercial|retail|reservoir|cemetery)$"](${b});
-  way["natural"~"^(water|wood|beach|sand|scrub|grassland)$"](${b});
-  relation["natural"~"^(water|wood)$"](${b});
-  way["waterway"~"^(river|stream|canal|riverbank)$"](${b});
-  way["building"](${b});
-  node["natural"="tree"](${b});
-  node["amenity"~"^(bench|cafe|fountain|drinking_water|restaurant|ice_cream)$"](${b});
-  node["leisure"~"^(playground|dog_park)$"](${b});
-  node["shop"](${b});
+  way[~"^(building|highway|landuse|leisure|natural|waterway|railway|amenity|barrier|water)$"~"."]${around};
+  relation["type"="multipolygon"][~"^(building|landuse|leisure|natural|water|amenity)$"~"."]${around};
+  node["natural"="tree"]${around};
+  node["amenity"~"^(bench|cafe|fountain|drinking_water|restaurant|ice_cream)$"]${around};
+  node["leisure"~"^(playground|dog_park)$"]${around};
+  node["shop"]${around};
 );
 out geom;`;
 }
@@ -189,11 +196,12 @@ function readOsm(osm, project) {
       continue;
     }
     const outlines = el.type === 'relation'
-      ? (el.members ?? []).filter((m) => m.role === 'outer' && m.geometry).map((m) => shapeOf(m.geometry))
+      ? stitchRings((el.members ?? []).filter((m) => m.role === 'outer' && m.geometry).map((m) => m.geometry)).map(shapeOf)
       : el.geometry ? [shapeOf(el.geometry)] : [];
     for (const shape of outlines) {
       if (shape.length < 2) continue;
       if (tags.building) { buildings.push(boundsOf(shape)); continue; }
+      if (tags.highway || tags.railway || tags.barrier) continue;
       if (tags.waterway && tags.waterway !== 'riverbank') { rivers.push({ line: shape, b: boundsOf(shape) }); continue; }
       const biome = areaBiome(tags);
       if (biome && shape.length >= 3) areas.push({ biome, poly: shape, b: boundsOf(shape) });
@@ -265,8 +273,9 @@ function toSegments(samples, labels, length, min = 30) {
   return segs;
 }
 
-// Turn a drawn route and the map data around it into a walk.
-export function buildWalk(points, osmJson) {
+// Turn a route (and the points it was planned through) and the map data
+// around it into a walk.
+export function buildWalk(points, osmJson, { waypoints = null } = {}) {
   if (points.length < 2) throw new Error('A route needs at least two points.');
   const lats = points.map((p) => p[0]);
   const lons = points.map((p) => p[1]);
@@ -285,7 +294,7 @@ export function buildWalk(points, osmJson) {
   const landmarks = [];
   for (const c of candidates) {
     if (landmarks.some((l) => Math.abs(l.d - c.d) < 15)) continue;
-    landmarks.push({ d: Math.round(c.d), kind: c.kind, name: c.name });
+    landmarks.push({ d: Math.round(c.d), kind: c.kind, name: c.name, x: Math.round(c.p[0] * 10) / 10, y: Math.round(-c.p[1] * 10) / 10 });
   }
   landmarks.sort((a, b) => a.d - b.d);
 
@@ -300,7 +309,12 @@ export function buildWalk(points, osmJson) {
   }
 
   for (const seg of segments) { seg.from = Math.round(seg.from); seg.to = Math.round(seg.to); }
-  return { points, length: Math.round(length), segments, landmarks };
+  // The route and the map around it, in metres east and south of the centre.
+  const flatLine = line.flatMap(([e, n]) => [Math.round(e * 10) / 10, Math.round(-n * 10) / 10]);
+  return {
+    points, waypoints: waypoints ?? [points[0], points[points.length - 1]], length: Math.round(length), segments, landmarks,
+    line: flatLine, map: extractMap(osmJson, project, line),
+  };
 }
 
 export function biomeAt(walk, metres) {

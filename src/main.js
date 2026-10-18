@@ -13,10 +13,11 @@ import { drawFind } from './finds-art.js';
 import { World, petScale } from './world.js';
 import { VIEW_W, VIEW_H } from './space-side.js';
 import { render } from './renderer.js';
+import { drawMapWalk, mapToWorld, zoomMap } from './map-art.js';
 import { SKIN_TONES, HAIR_COLORS, HAIR_STYLES, TOP_COLORS, BOTTOM_COLORS, defaultOwner } from './owner-look.js';
 import { Voice, VOICE_SLOTS } from './sound.js';
 import { MediaStore, photoToBlob, blobToImage } from './media-store.js';
-import { RoutePlanner, routeThumbnail } from './map-planner.js';
+import { RoutePlanner, routeThumbnail, rebuildRoute } from './map-planner.js';
 
 const SAVE_KEY = 'ai-pet/v1';
 const PREFS_KEY = 'ai-pet/prefs';
@@ -85,6 +86,9 @@ function fitCanvas(canvas) {
 // 2D is the main view; the 3D view is an experimental preview you can switch on.
 function use3D() { return Boolean(three) && prefs.get('view', '2d') === '3d'; }
 
+// Walking a real route, seen from above on its map (always in 2D).
+function onMap(w = world) { return Boolean(w?.walk?.track); }
+
 // Show the WebGL canvas under the 2D one, or hide it.
 function setStack(gl, on) {
   gl.hidden = !on;
@@ -98,8 +102,9 @@ function ensure3D() {
 }
 
 function toWorld(canvas, e, w) {
-  if (use3D() && scene3d && canvas === scene) return scene3d.pick(e.clientX, e.clientY);
   const r = canvas.getBoundingClientRect();
+  if (canvas === scene && onMap(w)) return mapToWorld(w, ((e.clientX - r.left) / r.width) * VIEW_W, ((e.clientY - r.top) / r.height) * VIEW_H);
+  if (use3D() && scene3d && canvas === scene) return scene3d.pick(e.clientX, e.clientY);
   return {
     x: ((e.clientX - r.left) / r.width) * VIEW_W + (w?.cam ?? 0),
     y: ((e.clientY - r.top) / r.height) * VIEW_H,
@@ -371,7 +376,7 @@ scene.addEventListener('pointerdown', (e) => {
     return;
   } else if (world.scene === 'park') {
     pointer.mode = 'walk';
-    world.setWalkInput(p.x >= world.owner.x ? 1 : -1);
+    world.setWalkInput(world.walkDirToward(p));
   } else if (hit === 'floor') {
     pointer.mode = null;
     world.walkOwnerTo(p.x);
@@ -384,7 +389,7 @@ scene.addEventListener('pointermove', (e) => {
   const p = toWorld(scene, e, world);
   if (pointer.mode === 'drag') { trackVelocity(p); world.dragTo(p.x, p.y); }
   else if (pointer.mode === 'pet') world.strokeTo(p.x, p.y);
-  else if (pointer.mode === 'walk') world.setWalkInput(p.x >= world.owner.x ? 1 : -1);
+  else if (pointer.mode === 'walk') world.setWalkInput(world.walkDirToward(p));
   else scene.style.cursor = p.onPet ? 'grab' : CURSORS[world.hitTest(p.x, p.y)] ?? 'default';
 });
 
@@ -399,6 +404,12 @@ function endPointer() {
   scene.classList.remove('grabbing');
 }
 scene.addEventListener('pointerup', endPointer);
+// The mouse wheel zooms the map on route walks.
+scene.addEventListener('wheel', (e) => {
+  if (!onMap()) return;
+  e.preventDefault();
+  zoomMap(e.deltaY > 0 ? 0.9 : 1.1);
+}, { passive: false });
 scene.addEventListener('pointercancel', endPointer);
 scene.addEventListener('lostpointercapture', endPointer);
 
@@ -413,6 +424,12 @@ for (const [id, dir] of [['walk-back', -1], ['walk-on', 1]]) {
   b.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') world?.setWalkInput(dir); });
   b.addEventListener('keyup', stop);
 }
+
+$('walk-jog').addEventListener('click', () => {
+  if (!world) return;
+  world.setJog(!world.owner.jog);
+  renderPanel();
+});
 
 function walkHome() {
   const r = world.endWalk();
@@ -464,9 +481,9 @@ document.addEventListener('keydown', (e) => {
   if (!world || $('home').hidden || e.target.closest('input, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key.toLowerCase();
   if (e.target.closest('button') && (k === ' ' || k === 'enter')) return;
-  if (world.scene === 'park' && ['arrowleft', 'arrowright', 'a', 'd'].includes(k)) {
+  if (world.scene === 'park' && (WALK_KEYS[k] && (onMap() || !WALK_KEYS[k][1]))) {
     held.add(k);
-    world.setWalkInput(k === 'arrowleft' || k === 'a' ? -1 : 1);
+    walkByKeys();
     e.preventDefault();
     return;
   }
@@ -482,7 +499,19 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('keyup', (e) => {
   held.delete(e.key.toLowerCase());
   if (world && held.size === 0) world.setWalkInput(0);
+  else if (world?.scene === 'park') walkByKeys();
 });
+
+// Arrow keys walk the way they point: along the route on a map, left or right side-on.
+const WALK_KEYS = { arrowleft: [-1, 0], a: [-1, 0], arrowright: [1, 0], d: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] };
+function walkByKeys() {
+  let x = 0;
+  let y = 0;
+  for (const k of held) { if (WALK_KEYS[k]) { x += WALK_KEYS[k][0]; y += WALK_KEYS[k][1]; } }
+  if (!x && !y) { world.setWalkInput(0); return; }
+  const o = world.owner;
+  world.setWalkInput(world.walkDirToward({ x: o.x + x * 100, y: (o.y ?? 0) + y * 100 }));
+}
 
 $('talk').addEventListener('submit', (e) => {
   e.preventDefault();
@@ -564,6 +593,21 @@ function placeThumb(p) {
 
 const walkPlace = (p) => ({ id: p.id, kind: placeKind(p), name: p.name, route: p.route });
 
+// Walk a place. Routes saved before walks were drawn from above have no map
+// yet: fetch it once and keep it.
+async function goWalk(p) {
+  if (p.route && !p.route.map) {
+    toast('Fetching the map around this route…');
+    try {
+      p.route = await rebuildRoute(p.route);
+      await media.put('places', p);
+    } catch {
+      toast('Couldn’t fetch the map, so this walk is side-on.');
+    }
+  }
+  startWalkAt(walkPlace(p));
+}
+
 function renderPicker() {
   const list = [{ id: 'park', name: 'The park', builtIn: true }, ...places];
   const ul = $('picker-places');
@@ -573,7 +617,7 @@ function renderPicker() {
     b.type = 'button';
     b.className = 'place-tile';
     b.innerHTML = `${placeThumb(p)}<span>${escapeHtml(p.name)}</span>`;
-    b.onclick = () => startWalkAt(walkPlace(p));
+    b.onclick = () => goWalk(p);
     li.append(b);
     return li;
   }));
@@ -616,6 +660,7 @@ const planner = new RoutePlanner({
   locate: $('map-locate'), notice: $('map-notice'), distance: $('map-distance'), undo: $('map-undo'),
   clear: $('map-clear'), build: $('map-build'), result: $('map-result'), summary: $('map-summary'),
   strip: $('map-strip'), name: $('map-name'), save: $('map-save'),
+  snap: $('map-snap'), loop: $('map-loop'), loopLength: $('map-loop-length'),
 }, {
   toast,
   onSave: async ({ name, route }) => {
@@ -624,7 +669,7 @@ const planner = new RoutePlanner({
     places.push(record);
     renderPlaces();
     renderPicker();
-    startWalkAt(walkPlace(record));
+    goWalk(record);
   },
 });
 
@@ -666,7 +711,7 @@ function renderPlaces() {
       b.onclick = fn;
       actions.append(b);
     };
-    if (p.id !== 'room') btn('Walk here', () => startWalkAt(walkPlace(p)));
+    if (p.id !== 'room') btn('Walk here', () => goWalk(p));
     if (!p.walkOnly && !route && !isHome) btn('Make home', () => { world.pet.home = p.id; storage.save(world.pet); renderPlaces(); });
     if (!p.builtIn) {
       btn('Remove', async () => {
@@ -790,6 +835,7 @@ function escapeHtml(s) {
 
 function contextHint() {
   const w = world;
+  if (onMap(w)) return 'Hold Walk on, the arrow keys, or press the map ahead of you to follow your route. Scroll to zoom. Press and hold your pet to give them a fuss.';
   if (w.scene === 'park') return 'Hold on either side of you, or the arrow keys, to walk. Press and hold your pet to give them a fuss.';
   if (w.drag?.item === 'scoop') return 'Hold the scoop over the bowl to pour. Let go when it looks like enough.';
   if (w.drag?.item === 'treat') return 'Hold the treat up high to lure a sit, or down on the floor to lure lying down. Let go at their mouth to hand it over.';
@@ -829,6 +875,7 @@ function renderPanel() {
   leash.hidden = !(onWalk && unlocked(pet, 'offLeash'));
   if (onWalk) {
     leash.setAttribute('aria-pressed', String(!world.walk.offLeash));
+    $('walk-jog').setAttribute('aria-pressed', String(Boolean(world.owner.jog)));
     leash.textContent = world.walk.offLeash ? 'Leash off' : 'Leash on';
   }
   renderFinds();
@@ -1030,8 +1077,9 @@ function frame(now) {
     }
     const ctx = fitCanvas(scene);
     const opts = { date, dt: dt * speed, backdrops: backdrops(world), images: { treat: treatImage } };
-    setStack($('scene3d'), solid);
-    if (solid) {
+    const mapped = onMap(world);
+    setStack($('scene3d'), solid && !mapped);
+    if (mapped) { if (ctx) drawMapWalk(ctx, world, opts); } else if (solid) {
       scene3d.render(world, opts);
       if (ctx) scene3d.drawOverlay(ctx, world);
     } else if (ctx) render(ctx, world, opts);
