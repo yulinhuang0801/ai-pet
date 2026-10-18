@@ -22,6 +22,7 @@ Everything happens with your hands in the scene. You appear there as a character
 - **Pet**: press and hold on your pet. Stroking it feels better than a still hand. Cats have a limit and will tell you when you reach it.
 - **Walk**: pick a place, then hold on either side of yourself (or use the arrow keys) to walk. The leash sags and pulls tight. Your pet stops to sniff until you tug, lunges at squirrels and drags you along, and cats often flop down in protest.
 - **Walk real routes, seen from above**: plan a walk on a real map (OpenStreetMap). Search for a place and click where you want to go: the route follows real streets and footpaths between your clicks instead of cutting through houses. Or press **Suggest a loop** for a round walk of 1, 2 or 3 km. The app then saves the map around your route (streets, paths, houses, parks, water, trees, benches, cafés, fountains, playgrounds and dog parks) and you walk it from above, turning its real corners. Your pet roams around you on the leash, checks out the landmarks, and finds things that suit the place (seashells only near water). A small map in the corner shows where you are. Walk or jog; scroll to zoom. Saved routes work offline afterwards.
+- **Two looks for map walks**: *drawn* from the map data (streets with their real widths, crossings, pavements, houses, parks; OpenStreetMap rarely records street trees one by one, so residential streets get a row of trees where there's room), or *satellite*: the real place from above. Satellite photos need a free key from [Esri](https://location.arcgis.com/) (no card, 2 million tiles a month) or [Google's Map Tiles API](https://developers.google.com/maps/documentation/tile/satellite) (billing account, 100,000 tiles a month free); paste it in once and it stays in your browser.
 - **Your own places**: upload any photo, whether your street, your park or something sillier, and walk your pet there or make it your home backdrop. Nothing is refused: it's your space.
 - **Make it yours**: use your own picture as the treat, and change your look by clicking yourself in the scene.
 - **Bond hearts**: walks, play, meals, cuddles and training each earn a few hearts a day, up to 10. Hearts raise your bond level (Getting to know you, Warming up, Friends, Good friends, Best friends, Inseparable), and each level unlocks something: harder tricks, gifts, off-leash walks, naps at your feet, a golden tag.
@@ -71,7 +72,8 @@ Keyboard shortcuts at home: F feeds, T gives a treat, B throws the ball, W start
 | `src/route-map.js` | The map saved with a route, and finding points along the route (pure, tested offline) |
 | `src/paths.js` | Finding a walkable way along streets and footpaths, and suggesting loops (pure, tested offline) |
 | `src/space-map.js` | The map space: a route walk seen from above, where the owner follows the route and the pet roams on the leash |
-| `src/map-art.js` | Draws a route walk from above: streets, houses, parks, water, trees, landmarks, and a small map |
+| `src/map-art.js` | Draws a route walk from above, drawn or on satellite photos: streets, houses, parks, water, trees, landmarks, and a small map |
+| `src/imagery.js` | Satellite photo services (Esri or Google) and checking a key |
 | `src/route-art.js` | Draws a route walk side-on (routes saved before maps were kept) and the landmark pictures |
 | `src/map-planner.js` | The map: search, click out a route along real paths or get a loop, fetch OpenStreetMap data, save the walk |
 | `vendor/leaflet/` | Leaflet, the map library |

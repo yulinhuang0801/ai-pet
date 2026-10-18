@@ -10,6 +10,7 @@ import { buildWalk, routeLength } from '../src/route.js';
 import { World } from '../src/world.js';
 import { createPet } from '../src/pet.js';
 import { LEASH } from '../src/space-side.js';
+import { MAP_UNITS_PER_METER as U } from '../src/space-map.js';
 
 const LAT = 51.5;
 const LON = -0.1;
@@ -125,15 +126,21 @@ test('walking a route from above turns its corners and keeps the pet on the leas
   w.setWalkInput(1);
   let maxGap = 0;
   let turned = false;
+  let northbound = 0;
+  let sameWay = 0;
   for (let i = 0; i < 6000 && !w.walk.arrived; i++) {
     w.update(0.05);
     maxGap = Math.max(maxGap, Math.hypot(w.body.x - w.owner.x, w.body.y - w.owner.y));
-    if (w.routeMeters() > 220 && Math.abs(w.owner.x - 100 * 80) < 20) turned = true;
+    if (w.routeMeters() > 220 && Math.abs(w.owner.x - 100 * U) < 20) {
+      turned = true;
+      if (w.activity.phase === 'walk' && w.body.speed > 5) { northbound++; if (w.body.dir === w.owner.dir) sameWay++; }
+    }
   }
   assert.ok(w.walk.arrived, 'reached the end');
   assert.ok(turned, 'went round the corner and north up the second street');
   assert.ok(maxGap <= LEASH + 1, `stayed within the leash (${Math.round(maxGap)})`);
   assert.ok(w.walk.visited.size >= 1, 'stopped at a landmark');
+  assert.ok(sameWay > 0.9 * northbound, `faced the same way as you while walking north (${sameWay} of ${northbound})`);
   assert.ok(w.walkedMeters() > 395 && w.walkedMeters() < 405, 'the route is 400 m');
   const end = w.endWalk();
   assert.ok(end.meters >= 395);
@@ -142,7 +149,7 @@ test('walking a route from above turns its corners and keeps the pet on the leas
 
 test('the way you point decides which way along the route you walk', () => {
   const w = walker(buildWalk(routePts, area));
-  w.owner.s = 250 * 80;
+  w.owner.s = 250 * U;
   w.setWalkInput(0);
   w.update(0.05);
   // The route runs north here (up the screen).

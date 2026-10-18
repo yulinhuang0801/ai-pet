@@ -355,6 +355,13 @@ label.small.file-button {
 }
 .map-search { display: flex; gap: 8px; flex-wrap: wrap; }
 .map-search input { flex: 1 1 200px; min-width: 0; border: 1px solid var(--line); background: var(--surface-2); border-radius: 10px; padding: 8px 12px; }
+.imagery-form { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: grid; gap: 8px; min-width: 0; }
+.imagery-form p, .imagery-form ul { margin: 0; }
+.imagery-form ul { padding-left: 1.2em; display: grid; gap: 4px; }
+.imagery-form .meta { color: var(--muted); font-size: 0.85rem; }
+.imagery-save { display: flex; flex-wrap: wrap; gap: 8px; }
+.imagery-save select { border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); border-radius: 10px; padding: 8px; font: inherit; }
+.imagery-save input { flex: 1 1 220px; min-width: 0; border: 1px solid var(--line); background: var(--surface-2); border-radius: 10px; padding: 8px 12px; font-family: ui-monospace, monospace; }
 .map-options { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.9rem; }
 .map-options .check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .map-options input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent, #1d6d64); }

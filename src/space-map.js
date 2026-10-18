@@ -18,12 +18,12 @@ import { measureLine, pointAlong, distanceAlong } from './route-map.js';
 import { biomeAt } from './route.js';
 import { pickFind } from './finds.js';
 
-export const MAP_UNITS_PER_METER = 80;
+export const MAP_UNITS_PER_METER = 64;
 const U = MAP_UNITS_PER_METER;
 // A brisk walk, about 1.6 m/s, or a jog at about 3 m/s; the pet's gaits keep up.
-const OWNER_WALK_SPEED = 130;
+const OWNER_WALK_SPEED = 105;
 const JOG = 1.9;
-const GAITS = { walk: 72, trot: 137, run: 273 };
+const GAITS = { walk: 58, trot: 110, run: 218 };
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const pointOf = (w, target) => (typeof target === 'number' ? { x: target, y: w.body.y } : target);
@@ -272,6 +272,10 @@ export const mapSpace = {
     b.x += b.vx * dt;
     b.y += b.vy * dt;
     b.speed = Math.hypot(b.vx, b.vy);
+    // Walking together, the pet faces the way you're going, unless it's
+    // clearly heading off left or right after something.
+    const o = this.owner;
+    if (o.speed > 5 && Math.abs(b.vx) < b.speed * 0.6) b.dir = o.dir;
     b.gait += dt * b.speed / (11 * this.scale);
     const k = 1 - Math.exp(-dt * 7);
     for (const key of Object.keys(b.target)) b.pose[key] += (b.target[key] - b.pose[key]) * k;

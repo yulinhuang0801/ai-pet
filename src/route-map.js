@@ -158,6 +158,7 @@ const ROADS = {
 };
 
 function lineKind(t) {
+  if (t.highway === 'footway' && (t.footway === 'sidewalk' || t.footway === 'crossing')) return t.footway;
   if (t.highway && t.area !== 'yes') {
     for (const [k, list] of Object.entries(ROADS)) if (list.includes(t.highway)) return k;
     return null;
@@ -166,6 +167,16 @@ function lineKind(t) {
   if (t.waterway === 'stream' || t.waterway === 'ditch' || t.waterway === 'drain') return 'stream';
   if (t.railway === 'rail' || t.railway === 'light_rail' || t.railway === 'tram') return 'rail';
   if (t.barrier === 'fence' || t.barrier === 'wall' || t.barrier === 'hedge') return t.barrier === 'hedge' ? 'hedge' : 'fence';
+  return null;
+}
+
+// A road's width in metres, when the map says how wide it is or how many lanes it has.
+function roadWidth(t) {
+  if (!t.highway) return null;
+  const w = parseFloat(t.width);
+  if (w > 1 && w < 40) return w;
+  const lanes = parseInt(t.lanes, 10);
+  if (lanes > 0 && lanes < 10) return lanes * 3.3 + 1;
   return null;
 }
 
@@ -227,7 +238,8 @@ export function extractMap(osm, project, line, pad = 110) {
     if (area) { addArea(area, geom); continue; }
     const kind = lineKind(t);
     if (!kind) continue;
-    for (const part of clipLine(simplify(geom.map(xy), 0.5), box)) lines.push({ k: kind, p: flat(part) });
+    const width = roadWidth(t);
+    for (const part of clipLine(simplify(geom.map(xy), 0.5), box)) lines.push(width ? { k: kind, p: flat(part), w: width } : { k: kind, p: flat(part) });
   }
   areas.sort((a, b) => AREA_KINDS.indexOf(a.k) - AREA_KINDS.indexOf(b.k));
   return { areas, lines, buildings, trees };

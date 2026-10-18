@@ -13,14 +13,15 @@ import { drawFind } from './finds-art.js';
 import { World, petScale } from './world.js';
 import { VIEW_W, VIEW_H } from './space-side.js';
 import { render } from './renderer.js';
-import { drawMapWalk, mapToWorld, zoomMap } from './map-art.js';
+import { drawMapWalk, mapToWorld, zoomMap, setImagery, imageryOn } from './map-art.js';
+import { imagerySource } from './imagery.js';
 import { SKIN_TONES, HAIR_COLORS, HAIR_STYLES, TOP_COLORS, BOTTOM_COLORS, defaultOwner } from './owner-look.js';
 import { Voice, VOICE_SLOTS } from './sound.js';
 import { MediaStore, photoToBlob, blobToImage } from './media-store.js';
 import { RoutePlanner, routeThumbnail, rebuildRoute, withoutMap } from './map-planner.js';
 
 // Shown under the route planner, so it's easy to tell which version a browser is running.
-const VERSION = '2026-10-18b';
+const VERSION = '2026-10-19a';
 const SAVE_KEY = 'ai-pet/v1';
 const PREFS_KEY = 'ai-pet/prefs';
 const speed = Number(new URLSearchParams(location.search).get('speed')) || 1;
@@ -426,6 +427,46 @@ for (const [id, dir] of [['walk-back', -1], ['walk-on', 1]]) {
   b.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') world?.setWalkInput(dir); });
   b.addEventListener('keyup', stop);
 }
+
+// --- Satellite photos on map walks ---
+
+async function usePhotos(on, { quiet = false } = {}) {
+  const saved = prefs.get('imagery', null);
+  if (!on) {
+    setImagery(null);
+    prefs.set('look', 'drawn');
+  } else if (!saved?.key) {
+    $('imagery-form').hidden = false;
+    $('imagery-key').focus();
+  } else {
+    try {
+      setImagery(await imagerySource(saved));
+      prefs.set('look', 'photo');
+      $('imagery-form').hidden = true;
+    } catch (err) {
+      setImagery(null);
+      if (!quiet) {
+        $('imagery-form').hidden = false;
+        toast(err.message, 'note');
+      }
+    }
+  }
+  if (world) renderPanel();
+}
+
+$('walk-look').addEventListener('click', () => usePhotos(!imageryOn()));
+$('imagery-close').addEventListener('click', () => { $('imagery-form').hidden = true; });
+$('imagery-provider').value = prefs.get('imagery', null)?.provider ?? 'esri';
+$('imagery-save').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const key = $('imagery-key').value.trim();
+  if (!key) return;
+  prefs.set('imagery', { provider: $('imagery-provider').value, key });
+  $('imagery-key').value = '';
+  usePhotos(true);
+});
+// Photos chosen before come back on their own.
+if (prefs.get('look') === 'photo') usePhotos(true, { quiet: true });
 
 $('walk-jog').addEventListener('click', () => {
   if (!world) return;
@@ -884,6 +925,8 @@ function renderPanel() {
   if (onWalk) {
     leash.setAttribute('aria-pressed', String(!world.walk.offLeash));
     $('walk-jog').setAttribute('aria-pressed', String(Boolean(world.owner.jog)));
+    $('walk-look').hidden = !onMap();
+    $('walk-look').setAttribute('aria-pressed', String(imageryOn()));
     leash.textContent = world.walk.offLeash ? 'Leash off' : 'Leash on';
   }
   renderFinds();

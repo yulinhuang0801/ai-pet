@@ -142,10 +142,34 @@
         <button type="button" id="walk-back" class="hold">Walk back</button>
         <button type="button" id="walk-on" class="hold primary">Walk on</button>
         <button type="button" id="walk-jog" class="ghost" aria-pressed="false">Jog</button>
+        <button type="button" id="walk-look" class="ghost" aria-pressed="false" hidden>Satellite</button>
         <button type="button" id="walk-leash" class="ghost" hidden aria-pressed="true">Leash on</button>
         <span class="walk-stat" id="walk-stat"></span>
         <button type="button" id="walk-home">Head home</button>
       </div>
+
+      <section class="imagery-form" id="imagery-form" hidden aria-labelledby="imagery-title">
+        <div class="picker-head">
+          <h3 id="imagery-title">Walk on satellite photos</h3>
+          <button type="button" class="ghost" id="imagery-close">Not now</button>
+        </div>
+        <p>See the real place from above, trees, cars and all. The photos come from a map company and need a key, which you can get for free:</p>
+        <ul>
+          <li><strong>Esri</strong>: sign up at <a href="https://location.arcgis.com/" target="_blank" rel="noopener">ArcGIS Location Platform</a> (no card needed) and create an API key with access to basemaps. 2 million photo tiles a month are free.</li>
+          <li><strong>Google</strong>: in <a href="https://developers.google.com/maps/documentation/tile/satellite" target="_blank" rel="noopener">Google Cloud</a>, turn on the Map Tiles API and create an API key. Needs a billing account; 100,000 tiles a month are free.</li>
+        </ul>
+        <form class="imagery-save" id="imagery-save">
+          <label for="imagery-provider" class="sr-only">Photo service</label>
+          <select id="imagery-provider">
+            <option value="esri">Esri</option>
+            <option value="google">Google</option>
+          </select>
+          <label for="imagery-key" class="sr-only">Your key</label>
+          <input id="imagery-key" autocomplete="off" spellcheck="false" placeholder="Paste your key">
+          <button type="submit" class="primary">Use photos</button>
+        </form>
+        <p class="meta">Your key stays in this browser. In the service's settings, limit it to this website so nobody else can use it.</p>
+      </section>
 
       <div class="places-picker" id="place-picker" hidden>
         <div class="picker-head">
