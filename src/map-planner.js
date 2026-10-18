@@ -76,7 +76,8 @@ function pathsAround(points) {
 // finding paths in map data; null if neither works.
 async function walkingRoute(points) {
   try {
-    const coords = points.map(([lat, lon]) => `${lon.toFixed(6)},${lat.toFixed(6)}`).join(';');
+    // Points are separated by ";", sent encoded because some networks refuse it in a path.
+    const coords = points.map(([lat, lon]) => `${lon.toFixed(6)},${lat.toFixed(6)}`).join('%3B');
     const res = await fetchWithin(`${ROUTER}/${coords}?overview=full&geometries=geojson`, {}, 8000);
     if (res.ok) {
       const data = await res.json();
