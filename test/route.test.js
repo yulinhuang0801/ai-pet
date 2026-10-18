@@ -2,7 +2,7 @@
 // Overpass "out geom" query returns (not real map data).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { haversine, routeLength, buildWalk, biomeAt, describeWalk, overpassQuery } from '../src/route.js';
+import { haversine, routeLength, buildWalk, biomeAt, describeWalk, overpassQuery, corridorBoxes } from '../src/route.js';
 
 // A straight route heading east from a made-up point.
 const LAT = 51.5;
@@ -60,10 +60,14 @@ test('describes the walk in plain words', () => {
   assert.match(text, /a café/);
 });
 
-test('the query covers the route with padding', () => {
+test('the query asks for the map piece by piece along the route', () => {
   const q = overpassQuery(route);
   assert.match(q, /out geom;/);
   assert.match(q, /node\["amenity"/);
+  assert.equal((q.match(/way\["building"\]/g) ?? []).length, corridorBoxes(route).length);
+  // A kilometre with a point every 100 m comes in three pieces: 0-400, 400-800 and 800-1000 m.
+  const long = Array.from({ length: 11 }, (_, i) => [LAT, metresEast(i * 100)]);
+  assert.equal(corridorBoxes(long).length, 3);
 });
 
 test('walking a route visits its landmarks and ends at its end', async () => {

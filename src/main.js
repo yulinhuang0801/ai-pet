@@ -17,8 +17,10 @@ import { drawMapWalk, mapToWorld, zoomMap } from './map-art.js';
 import { SKIN_TONES, HAIR_COLORS, HAIR_STYLES, TOP_COLORS, BOTTOM_COLORS, defaultOwner } from './owner-look.js';
 import { Voice, VOICE_SLOTS } from './sound.js';
 import { MediaStore, photoToBlob, blobToImage } from './media-store.js';
-import { RoutePlanner, routeThumbnail, rebuildRoute } from './map-planner.js';
+import { RoutePlanner, routeThumbnail, rebuildRoute, withoutMap } from './map-planner.js';
 
+// Shown under the route planner, so it's easy to tell which version a browser is running.
+const VERSION = '2026-10-18b';
 const SAVE_KEY = 'ai-pet/v1';
 const PREFS_KEY = 'ai-pet/prefs';
 const speed = Number(new URLSearchParams(location.search).get('speed')) || 1;
@@ -471,6 +473,8 @@ function renderSoundButton() {
 
 function startWalkAt(place) {
   $('place-picker').hidden = true;
+  // Already out on a walk: head home first, then set off on the new one.
+  if (world.scene === 'park') walkHome();
   world.startWalk(place);
   renderPanel();
 }
@@ -601,8 +605,10 @@ async function goWalk(p) {
     try {
       p.route = await rebuildRoute(p.route);
       await media.put('places', p);
-    } catch {
-      toast('Couldn’t fetch the map, so this walk is side-on.');
+    } catch (err) {
+      toast(`Couldn’t fetch the map for this route: ${err.message} For now you’ll walk it without the streets around it.`, 'note');
+      startWalkAt(walkPlace({ ...p, route: withoutMap(p.route) }));
+      return;
     }
   }
   startWalkAt(walkPlace(p));
@@ -672,6 +678,8 @@ const planner = new RoutePlanner({
     goWalk(record);
   },
 });
+
+$('map-version').textContent = `Version ${VERSION}`;
 
 function openPlanner() {
   $('place-picker').hidden = true;

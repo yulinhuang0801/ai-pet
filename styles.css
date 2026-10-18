@@ -368,6 +368,7 @@ label.small.file-button {
 .map-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .map-tools span { margin-right: auto; color: var(--muted); font-size: 0.9rem; font-variant-numeric: tabular-nums; }
 .map-result { display: grid; gap: 8px; }
+.map-version { margin: 0; color: var(--muted); font-size: 0.75rem; text-align: right; }
 .map-result p { margin: 0; }
 .biome-strip { display: flex; height: 10px; border-radius: 999px; overflow: hidden; }
 .map-save { display: flex; gap: 8px; flex-wrap: wrap; }

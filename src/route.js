@@ -3,7 +3,7 @@
 // functions over OpenStreetMap data (the JSON an Overpass "out geom" query
 // returns), so this works the same in any view and can be tested offline.
 
-import { simplify, stitchRings, extractMap } from './route-map.js';
+import { stitchRings, extractMap } from './route-map.js';
 
 export const BIOMES = {
   park: { label: 'park' },
@@ -60,27 +60,42 @@ export function bbox(points, pad = 80) {
   return [Math.min(...lats) - dLat, Math.min(...lons) - dLon, Math.max(...lats) + dLat, Math.max(...lons) + dLon];
 }
 
-// The route, thinned out to at most about `max` points, for queries.
-function thinned(points, max = 80) {
-  const project = projector(points[0]);
-  const pts = points.map((p, i) => Object.assign(project(p), { i }));
-  let kept = pts;
-  for (let tol = 2; kept.length > max; tol *= 2) kept = simplify(pts, tol);
-  return kept.map((xy) => points[xy.i]);
+// Boxes covering the route piece by piece, each padded by `pad` metres, so a
+// long or winding route doesn't ask for everything in one huge box.
+export function corridorBoxes(points, pad = 90, piece = 350) {
+  const boxes = [];
+  let from = 0;
+  let run = 0;
+  for (let i = 1; i < points.length; i++) {
+    run += haversine(points[i - 1], points[i]);
+    if (run >= piece || i === points.length - 1) {
+      boxes.push(bbox(points.slice(from, i + 1), pad));
+      from = i;
+      run = 0;
+    }
+  }
+  return boxes.length ? boxes : [bbox(points, pad)];
 }
 
 // The Overpass query for everything the walk is built from and drawn with:
-// whatever lies within `radius` metres of the route.
-export function overpassQuery(points, radius = 90) {
-  const around = `(around:${radius},${thinned(points).map(([lat, lon]) => `${lat.toFixed(6)},${lon.toFixed(6)}`).join(',')})`;
-  return `[out:json][timeout:40];
+// whatever lies near the route. Each line asks for one tag, which Overpass
+// can look up quickly.
+export function overpassQuery(points) {
+  const asks = [
+    'way["building"]', 'way["highway"]', 'way["landuse"]', 'way["leisure"]', 'way["natural"]', 'way["water"]',
+    'way["waterway"]', 'way["railway"]', 'way["amenity"="parking"]',
+    'relation["type"="multipolygon"]["landuse"]', 'relation["type"="multipolygon"]["leisure"]',
+    'relation["type"="multipolygon"]["natural"]', 'relation["type"="multipolygon"]["water"]', 'relation["type"="multipolygon"]["building"]',
+    'node["natural"="tree"]', 'node["amenity"~"^(bench|cafe|fountain|drinking_water|restaurant|ice_cream)$"]',
+    'node["leisure"~"^(playground|dog_park)$"]', 'node["shop"]',
+  ];
+  const lines = corridorBoxes(points).flatMap((b) => {
+    const box = b.map((v) => v.toFixed(6)).join(',');
+    return asks.map((a) => `  ${a}(${box});`);
+  });
+  return `[out:json][timeout:60];
 (
-  way[~"^(building|highway|landuse|leisure|natural|waterway|railway|amenity|barrier|water)$"~"."]${around};
-  relation["type"="multipolygon"][~"^(building|landuse|leisure|natural|water|amenity)$"~"."]${around};
-  node["natural"="tree"]${around};
-  node["amenity"~"^(bench|cafe|fountain|drinking_water|restaurant|ice_cream)$"]${around};
-  node["leisure"~"^(playground|dog_park)$"]${around};
-  node["shop"]${around};
+${lines.join('\n')}
 );
 out geom;`;
 }
