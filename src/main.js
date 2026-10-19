@@ -21,7 +21,7 @@ import { MediaStore, photoToBlob, blobToImage } from './media-store.js';
 import { RoutePlanner, routeThumbnail, rebuildRoute, withoutMap } from './map-planner.js';
 
 // Shown under the route planner, so it's easy to tell which version a browser is running.
-const VERSION = '2026-10-19b';
+const VERSION = '2026-10-19c';
 const SAVE_KEY = 'ai-pet/v1';
 const PREFS_KEY = 'ai-pet/prefs';
 const speed = Number(new URLSearchParams(location.search).get('speed')) || 1;
@@ -316,6 +316,7 @@ function showHome() {
   renderPlaces();
   renderVoices();
   if (location.hash === '#map') openPlanner();
+  if (location.hash === '#satellite') openPhotoForm();
 }
 
 function toast(text, kind = '') {
@@ -436,13 +437,13 @@ async function usePhotos(on, { quiet = false } = {}) {
     setImagery(null);
     prefs.set('look', 'drawn');
   } else if (!saved?.key) {
-    $('imagery-form').hidden = false;
-    $('imagery-key').focus();
+    openPhotoForm();
   } else {
     try {
       setImagery(await imagerySource(saved));
       prefs.set('look', 'photo');
       $('imagery-form').hidden = true;
+      if (!quiet) toast(onMap() ? 'Satellite photos on.' : 'Key saved. Your map walks will be on satellite photos.');
     } catch (err) {
       setImagery(null);
       if (!quiet) {
@@ -454,7 +455,16 @@ async function usePhotos(on, { quiet = false } = {}) {
   if (world) renderPanel();
 }
 
+// The form for the photo service's key, from the planner, the walk, or a link ending in #satellite.
+function openPhotoForm() {
+  const form = $('imagery-form');
+  form.hidden = false;
+  form.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  $('imagery-key').focus({ preventScroll: true });
+}
+
 $('walk-look').addEventListener('click', () => usePhotos(!imageryOn()));
+$('map-photos').addEventListener('click', openPhotoForm);
 $('imagery-close').addEventListener('click', () => { $('imagery-form').hidden = true; });
 $('imagery-provider').value = prefs.get('imagery', null)?.provider ?? 'esri';
 $('imagery-save').addEventListener('submit', (e) => {
@@ -732,7 +742,11 @@ $('map-close').addEventListener('click', () => planner.close());
 $('plan-route').addEventListener('click', () => openPlanner());
 $('act-map').addEventListener('click', () => openPlanner());
 // A link ending in #map opens the planner straight away.
-window.addEventListener('hashchange', () => { if (location.hash === '#map' && !$('home').hidden) openPlanner(); });
+window.addEventListener('hashchange', () => {
+  if ($('home').hidden) return;
+  if (location.hash === '#map') openPlanner();
+  if (location.hash === '#satellite') openPhotoForm();
+});
 
 $('place-file').addEventListener('change', async (e) => {
   await addPlace(e.target.files[0]);
