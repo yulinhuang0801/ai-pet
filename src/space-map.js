@@ -40,9 +40,15 @@ function petAlong(w) {
   return distanceAlong(w.walk.track, w.body.x / U, w.body.y / U, s - 15, s + 15) * U;
 }
 
-// Something drawn in the side-on room relative to the floor, moved to stand on
-// the pet's spot on the map.
-function onPetSpot(w, p) { return { x: p.x, y: p.y - GROUND + w.body.y }; }
+// You and your pet are seen from above here, facing along a heading (an
+// angle). The pet's length from nose to rump, in metres, as it's drawn.
+export const petLength = (pet, scale) => (pet.species === 'cat' ? 1.0 : 1.25) * scale;
+
+// Turn a heading smoothly toward another angle.
+function turnToward(from, to, k) {
+  const d = Math.atan2(Math.sin(to - from), Math.cos(to - from));
+  return from + d * k;
+}
 
 export const mapSpace = {
   ...sideSpace,
@@ -55,11 +61,12 @@ export const mapSpace = {
     w.length = w.track.length * U;
     w.side = 1; // which side of the path the pet trots on
     const start = routePoint(this, 0);
+    const heading = Math.atan2(start.ty, start.tx);
     Object.assign(this.owner, {
-      x: start.x, y: start.y, s: 0, dir: start.tx >= 0 ? 1 : -1, vx: 0, targetX: null, walkInput: 0, hand: null,
+      x: start.x, y: start.y, s: 0, dir: start.tx >= 0 ? 1 : -1, heading, vx: 0, targetX: null, walkInput: 0, hand: null,
     });
     const ahead = routePoint(this, 110);
-    Object.assign(this.body, { x: ahead.x, y: ahead.y, vx: 0, vy: 0, dir: ahead.x >= start.x ? 1 : -1 });
+    Object.assign(this.body, { x: ahead.x, y: ahead.y, vx: 0, vy: 0, dir: ahead.x >= start.x ? 1 : -1, heading });
     this.mapCam = { x: start.x, y: start.y };
     if (this.ball.state === 'mouth' || this.ball.state === 'air') { this.ball.state = 'ground'; this.ball.y = GROUND - 9; }
   },
@@ -127,15 +134,28 @@ export const mapSpace = {
 
   // --- The pet's head ---
 
-  headPoint() { return onPetSpot(this, sideSpace.headPoint.call(this)); },
+  // From above, the head is just in front of the body; the mouth a little further.
+  headPoint() {
+    const b = this.body;
+    const d = petLength(this.pet, this.scale) * 0.42 * U;
+    return { x: b.x + Math.cos(b.heading) * d, y: b.y + Math.sin(b.heading) * d };
+  },
 
-  heldLow(point) { return point.y > this.body.y - 40 * this.scale; },
+  mouthPoint() {
+    const b = this.body;
+    const d = petLength(this.pet, this.scale) * 0.55 * U;
+    return { x: b.x + Math.cos(b.heading) * d, y: b.y + Math.sin(b.heading) * d };
+  },
+
+  // Seen from above there's no high or low, so treats don't lure sits and downs on walks.
+  heldHigh() { return false; },
+  heldLow() { return false; },
 
   // --- Treats ---
 
   dropTreat(point) {
-    // It drops to the ground just below the hand.
-    this.floorTreat = { x: point.x, y: point.y, vy: 0, landY: Math.min(point.y + 60, Math.max(point.y, this.owner.y)) };
+    // Seen from above, it lands where you let go.
+    this.floorTreat = { x: point.x, y: point.y, vy: 0, landY: point.y };
   },
 
   // --- What the owner's hands can touch ---
@@ -220,9 +240,7 @@ export const mapSpace = {
     o.vx = o.speed * o.walkInput;
     o.phase += dt * o.speed / 22;
     if (o.speed > 5) o.lastMoved = this.time;
-    if (o.hand && o.speed < 5) o.dir = o.hand.x >= o.x ? 1 : -1;
-    const want = o.hand ? clamp((o.hand.y - (o.y - 150)) / 110, 0, 1) : 0;
-    o.crouch += (want - o.crouch) * (1 - Math.exp(-dt * 6));
+    if (o.hand && o.speed < 5) o.heading = turnToward(o.heading, Math.atan2(o.hand.y - o.y, o.hand.x - o.x), 1 - Math.exp(-dt * 6));
     // The camera follows, looking a little ahead.
     const ahead = routePoint(this, o.s + (o.walkInput || 0) * 4 * U);
     const k = 1 - Math.exp(-dt * 2.5);
@@ -272,10 +290,12 @@ export const mapSpace = {
     b.x += b.vx * dt;
     b.y += b.vy * dt;
     b.speed = Math.hypot(b.vx, b.vy);
-    // Walking together, the pet faces the way you're going, unless it's
-    // clearly heading off left or right after something.
+    // The pet faces the way it moves; standing beside you while you walk, it
+    // faces the way you're going.
     const o = this.owner;
-    if (o.speed > 5 && Math.abs(b.vx) < b.speed * 0.6) b.dir = o.dir;
+    const want = b.speed > 12 ? Math.atan2(b.vy, b.vx) : o.speed > 5 ? o.heading : b.heading;
+    b.heading = turnToward(b.heading ?? want, want, 1 - Math.exp(-dt * 8));
+    b.dir = Math.cos(b.heading) >= 0 ? 1 : -1;
     b.gait += dt * b.speed / (11 * this.scale);
     const k = 1 - Math.exp(-dt * 7);
     for (const key of Object.keys(b.target)) b.pose[key] += (b.target[key] - b.pose[key]) * k;
@@ -301,14 +321,17 @@ function placeOwner(w) {
   const p = routePoint(w, o.s);
   o.x = p.x;
   o.y = p.y;
-  if (o.walkInput && Math.abs(p.tx) > 0.2) o.dir = Math.sign(p.tx) * o.walkInput;
+  if (o.walkInput) {
+    const want = Math.atan2(p.ty * o.walkInput, p.tx * o.walkInput);
+    o.heading = turnToward(o.heading ?? want, want, 0.25);
+    o.dir = Math.cos(o.heading) >= 0 ? 1 : -1;
+  }
 }
 
+// Pressing on the pet: anywhere on its body or head, with a little room to spare.
 function petHit(w, x, y) {
-  const s = w.scale;
   const b = w.body;
+  const L = petLength(w.pet, w.scale) * U;
   const head = w.headPoint();
-  const inBody = Math.abs(x - (b.x + b.dir * 10 * s)) < 70 * s && y > b.y - b.jump - 95 * s && y < b.y + 6;
-  const inHead = Math.hypot(x - head.x, y - head.y) < 34 * s;
-  return inBody || inHead;
+  return Math.hypot(x - b.x, y - b.y) < L * 0.45 || Math.hypot(x - head.x, y - head.y) < L * 0.3;
 }

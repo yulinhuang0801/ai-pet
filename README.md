@@ -73,6 +73,7 @@ Keyboard shortcuts at home: F feeds, T gives a treat, B throws the ball, W start
 | `src/paths.js` | Finding a walkable way along streets and footpaths, and suggesting loops (pure, tested offline) |
 | `src/space-map.js` | The map space: a route walk seen from above, where the owner follows the route and the pet roams on the leash |
 | `src/map-art.js` | Draws a route walk from above, drawn or on satellite photos: streets, houses, parks, water, trees, landmarks, and a small map |
+| `src/topdown-art.js` | You and your pet seen from above, for map walks |
 | `src/imagery.js` | Satellite photo services (Esri or Google) and checking a key |
 | `src/route-art.js` | Draws a route walk side-on (routes saved before maps were kept) and the landmark pictures |
 | `src/map-planner.js` | The map: search, click out a route along real paths or get a loop, fetch OpenStreetMap data, save the walk |

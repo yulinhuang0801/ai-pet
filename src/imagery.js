@@ -25,7 +25,22 @@ export async function imagerySource({ provider, key }) {
   if (provider === 'esri') {
     const tileUrl = (z, x, y) => `https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}?token=${k}`;
     await tryTile(tileUrl(1, 0, 0));
-    return { tileUrl, maxZoom: 19, credit: 'Powered by Esri · Esri, Maxar, Earthstar Geographics, and the GIS User Community' };
+    // Esri's sharpest photos go to level 20 or more in many towns; its tile
+    // map says which levels a place has.
+    const best = async (lat, lon) => {
+      for (const z of [21, 20]) {
+        const n = 2 ** z;
+        const x = Math.floor(((lon + 180) / 360) * n);
+        const y = Math.floor(((1 - Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) / Math.PI) / 2) * n);
+        try {
+          const res = await fetch(`https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tilemap/${z}/${y}/${x}/1/1?token=${k}`);
+          const data = await res.json();
+          if (data.data?.[0] === 1) return z;
+        } catch { /* fall back to level 19 */ }
+      }
+      return 19;
+    };
+    return { tileUrl, maxZoom: 19, best, credit: 'Powered by Esri · Esri, Maxar, Earthstar Geographics, and the GIS User Community' };
   }
   if (provider === 'google') {
     // Google hands out a session for the kind of map wanted, then serves tiles for it.

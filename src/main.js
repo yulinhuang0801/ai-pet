@@ -21,7 +21,7 @@ import { MediaStore, photoToBlob, blobToImage } from './media-store.js';
 import { RoutePlanner, routeThumbnail, rebuildRoute, withoutMap } from './map-planner.js';
 
 // Shown under the route planner, so it's easy to tell which version a browser is running.
-const VERSION = '2026-10-19c';
+const VERSION = '2026-10-19d';
 const SAVE_KEY = 'ai-pet/v1';
 const PREFS_KEY = 'ai-pet/prefs';
 const speed = Number(new URLSearchParams(location.search).get('speed')) || 1;

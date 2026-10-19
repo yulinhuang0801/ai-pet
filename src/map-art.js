@@ -6,20 +6,20 @@
 // Two looks: drawn from the map data, or on satellite photos of the real
 // place (which need a key for the photo service; see setImagery).
 
-import { VIEW_W, VIEW_H } from './space-side.js';
+import { VIEW_W, VIEW_H, LEASH } from './space-side.js';
 import { MAP_UNITS_PER_METER as U } from './space-map.js';
-import { drawPet } from './pet-art.js';
-import { drawOwner } from './owner-art.js';
-import { unlocked } from './bond.js';
+import { drawOwnerTop, drawPetTop, drawCritterTop, OWNER_SPAN } from './topdown-art.js';
 import {
-  darkness, drawBubble, drawParticles, drawCritter, drawLeash, drawBone, drawImageItem, drawSparkleFind,
+  darkness, drawBubble, drawParticles, drawBone, drawImageItem, drawSparkleFind,
 } from './renderer.js';
-import { drawLandmark, sign, landmarkHeight, landmarkName } from './route-art.js';
+import { sign, landmarkName } from './route-art.js';
 import { projector } from './route.js';
 
-// Screen pixels per map unit, which the mouse wheel changes.
+// Screen pixels per map unit, which the mouse wheel changes. On satellite
+// photos it can't go closer than the photos are sharp (`photoCap`).
 let zoom = 0.2;
-export function zoomMap(factor) { zoom = Math.min(0.5, Math.max(0.1, zoom * factor)); }
+let photoCap = Infinity;
+export function zoomMap(factor) { zoom = Math.min(0.5, photoCap, Math.max(0.06, zoom * factor)); }
 
 // Buildings look this tall compared with their real height, so they don't hide too much.
 const HEIGHT = 0.35;
@@ -278,24 +278,70 @@ function drawTree(ctx, t, dark) {
   ctx.fill();
 }
 
-function drawFlag(ctx, p, finish) {
-  ctx.fillStyle = '#3d3a36';
-  ctx.fillRect(p.x - 6, p.y - 200, 12, 200);
-  ctx.fillStyle = finish ? '#1f2a24' : '#1d6d64';
-  ctx.fillRect(p.x + 6, p.y - 200, 110, 64);
-  if (finish) {
-    ctx.fillStyle = '#f4f7f4';
-    for (let r = 0; r < 2; r++) for (let c = 0; c < 4; c++) if ((r + c) % 2) ctx.fillRect(p.x + 6 + c * 27.5, p.y - 200 + r * 32, 27.5, 32);
+// Landmarks are round badges on the map, the same size on screen at any zoom.
+const LANDMARK_ICONS = {
+  dog_park: '🐕', playground: '🛝', fountain: '⛲', drinking_water: '🚰', cafe: '☕', ice_cream: '🍦',
+  restaurant: '🍽️', bench: '🪑', shop: '🛍️',
+};
+
+function drawBadge(ctx, p, icon, fill = '#ffffff') {
+  const r = 13 / zoom;
+  ctx.fillStyle = 'rgba(30, 30, 20, 0.25)';
+  ctx.beginPath();
+  ctx.arc(p.x, p.y + 2 / zoom, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = '#1d6d64';
+  ctx.lineWidth = 2 / zoom;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  if (icon) {
+    ctx.font = `${15 / zoom}px system-ui, "Apple Color Emoji", "Segoe UI Emoji", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(icon, p.x, p.y + 1 / zoom);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
   }
 }
 
-function drawMapCritter(ctx, c, time) {
+// Start and finish: a teal dot and a chequered one.
+function drawEnd(ctx, p, finish) {
+  const r = 9 / zoom;
   ctx.save();
-  ctx.translate(c.x, c.y);
-  ctx.scale(1.6, 1.6);
-  // The side-on critter is drawn with its feet at 0; a bird rises as it flies off.
-  drawCritter(ctx, c, 0, time, 0, -40);
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+  ctx.fillStyle = finish ? '#ffffff' : '#1d6d64';
+  ctx.fill();
+  if (finish) {
+    ctx.clip();
+    ctx.fillStyle = '#1f2a24';
+    const c = r / 2;
+    for (let i = -2; i < 2; i++) for (let j = -2; j < 2; j++) if ((i + j) % 2 === 0) ctx.fillRect(p.x + i * c, p.y + j * c, c, c);
+  }
   ctx.restore();
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2.5 / zoom;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+// The leash, seen from above: it bows to one side when slack and pulls straight when tight.
+function drawLeashTop(ctx, hand, collar, tension, colour, width) {
+  const dx = collar.x - hand.x;
+  const dy = collar.y - hand.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const slack = Math.max(0, LEASH * 1.1 - len) * 0.35 * (1 - tension);
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = width;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(hand.x, hand.y);
+  ctx.quadraticCurveTo((hand.x + collar.x) / 2 - (dy / len) * slack, (hand.y + collar.y) / 2 + (dx / len) * slack, collar.x, collar.y);
+  ctx.stroke();
 }
 
 // --- the small map in the corner ---
@@ -448,15 +494,30 @@ function tileImage(url) {
   return img;
 }
 
+// The sharpest photo level a route's place has, asked once per route and service.
+const levels = new WeakMap();
+function photoLevel(m) {
+  if (!imagery.best) return imagery.maxZoom;
+  let known = levels.get(m);
+  if (!known || known.source !== imagery) {
+    known = { source: imagery, z: imagery.maxZoom };
+    levels.set(m, known);
+    imagery.best(...m.origin).then((z) => { known.z = z; });
+  }
+  return known.z;
+}
+
 // Draws the photo tiles covering the view. While some are still loading, the
 // drawn look (`fallback`) shows underneath.
 function drawImagery(ctx, m, cam, fallback) {
   const [lat0, lon0] = m.origin;
   const toLatLon = (x, y) => [lat0 - y / U / m.perDegree.y, lon0 + x / U / m.perDegree.x];
   const toWorld = (lat, lon) => ({ x: (lon - lon0) * m.perDegree.x * U, y: -(lat - lat0) * m.perDegree.y * U });
-  // A zoom level whose pixels are about as fine as the screen's.
-  const metresPerPixel = 1 / (zoom * U * (window.devicePixelRatio || 1));
-  const z = Math.max(12, Math.min(imagery.maxZoom, Math.round(Math.log2((156543.03 * Math.cos((lat0 * Math.PI) / 180)) / metresPerPixel))));
+  // A zoom level whose pixels are about as fine as the screen's, up to the sharpest there is.
+  const ground = 156543.03 * Math.cos((lat0 * Math.PI) / 180); // metres per pixel at level 0
+  const screenPx = ctx.canvas.width / VIEW_W; // device pixels per view pixel
+  const maxZ = photoLevel(m);
+  const z = Math.max(12, Math.min(maxZ, Math.round(Math.log2(ground * zoom * U * screenPx))));
   const n = 2 ** z;
   const tx = (lon) => ((lon + 180) / 360) * n;
   const ty = (lat) => ((1 - Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) / Math.PI) / 2) * n;
@@ -489,6 +550,12 @@ export const imageryOn = () => Boolean(imagery);
 export function drawMapWalk(ctx, world, { date = new Date(), time = world.time, images = {} } = {}) {
   const route = world.walk.route;
   const m = prepare(route);
+  if (imagery) {
+    // Never enlarge the sharpest photos more than about two times.
+    const ground = 156543.03 * Math.cos((m.origin[0] * Math.PI) / 180);
+    photoCap = (2.2 * 2 ** photoLevel(m)) / (ground * U * (ctx.canvas.width / VIEW_W));
+    zoom = Math.min(zoom, photoCap);
+  } else photoCap = Infinity;
   const dark = darkness(date);
   const cam = camera(world);
   const view = { x0: cam.x - 600, y0: cam.y - 200, x1: cam.x + VIEW_W / zoom + 600, y1: cam.y + VIEW_H / zoom + 900 };
@@ -536,50 +603,49 @@ export function drawMapWalk(ctx, world, { date = new Date(), time = world.time, 
     const p = { x: lm.x * U, y: lm.y * U };
     if (p.x < view.x0 || p.x > view.x1 || p.y < view.y0 || p.y > view.y1) continue;
     near.push({ lm, p });
-    things.push({
-      y: p.y,
-      draw: () => { ctx.save(); ctx.translate(p.x, p.y); ctx.scale(2.2, 2.2); drawLandmark(ctx, lm, 0, 0, false); ctx.restore(); },
-    });
   }
   const start = { x: route.line[0] * U, y: route.line[1] * U };
   const end = { x: route.line[route.line.length - 2] * U, y: route.line[route.line.length - 1] * U };
-  things.push({ y: start.y, draw: () => drawFlag(ctx, start, false) });
-  things.push({ y: end.y, draw: () => drawFlag(ctx, end, true) });
 
   const w = world.walk;
   if (w.find) {
     const f = w.find;
     things.push({ y: f.y, draw: () => { ctx.save(); ctx.translate(f.x, f.y); ctx.scale(1.6, 1.6); drawSparkleFind(ctx, { ...f, x: 0 }, time, 0); ctx.restore(); } });
   }
-  if (w.critter) things.push({ y: w.critter.y, draw: () => drawMapCritter(ctx, w.critter, time) });
+  if (w.critter) things.push({ y: w.critter.y, draw: () => drawCritterTop(ctx, w.critter, time, Math.max(U * 1.8, 18 / zoom)) });
   const treat = (x, y, size, angle) => (images.treat ? drawImageItem(ctx, images.treat, x, y, size * 16) : drawBone(ctx, x, y, size, angle));
   if (world.floorTreat) things.push({ y: world.floorTreat.y, draw: () => treat(world.floorTreat.x, world.floorTreat.y, 1.2, 0.2) });
 
   const o = world.owner;
   const b = world.body;
   const leashed = !w.offLeash;
+  // Figures grow when the view is far out, so you can always see them.
+  const k = U * Math.max(1, 34 / (OWNER_SPAN * U * zoom));
   let handPos = null;
+  let collar = null;
+  // The pet first, so you hold the leash above it.
   things.push({
-    y: o.y,
+    y: Math.min(b.y, o.y) - 1,
     draw: () => {
-      let hand = o.hand;
-      if (leashed && !hand) {
-        const toward = Math.sign(b.x - o.x) || o.dir;
-        hand = { x: o.x + toward * (34 + w.tension * 24), y: o.y - 150 + w.tension * 20 };
-      }
-      handPos = drawOwner(ctx, world.pet.owner, { x: o.x, dir: o.dir, phase: o.phase, speed: o.speed, crouch: o.crouch, time, hand }, o.y);
+      collar = drawPetTop(ctx, world.pet, {
+        x: b.x, y: b.y, heading: b.heading, pose: b.pose, gait: b.gait, speed: b.speed, wagPhase: b.wagPhase, jump: b.jump, time, scale: world.scale,
+      }, k);
     },
   });
   things.push({
-    y: b.y + 1,
-    draw: () => drawPet(ctx, world.pet, {
-      x: b.x, y: b.y - b.jump, jump: b.jump, scale: world.scale, dir: b.dir, pose: b.pose,
-      gait: b.gait, speed: b.speed, wagPhase: b.wagPhase, time, holdingBall: false, goldTag: unlocked(world.pet, 'goldTag'),
-    }),
+    y: Math.min(b.y, o.y),
+    draw: () => {
+      const hand = o.hand ?? (leashed ? collar : null);
+      handPos = drawOwnerTop(ctx, world.pet.owner, { x: o.x, y: o.y, heading: o.heading, phase: o.phase, speed: o.speed, hand }, k);
+      if (leashed && collar) drawLeashTop(ctx, handPos, collar, w.tension, world.pet.look.collar ?? '#d0443c', 0.07 * k);
+    },
   });
   things.sort((p, q) => p.y - q.y);
   for (const t of things) t.draw();
-  if (leashed && handPos) drawLeash(ctx, world, handPos);
+  // Landmarks, start and finish on top, as markers.
+  for (const { lm, p } of near) drawBadge(ctx, p, LANDMARK_ICONS[lm.kind]);
+  drawEnd(ctx, start, false);
+  drawEnd(ctx, end, true);
 
   if (world.drag?.item === 'treat') treat(world.drag.x, world.drag.y, 1.7, -0.3);
   drawParticles(ctx, world);
@@ -593,20 +659,19 @@ export function drawMapWalk(ctx, world, { date = new Date(), time = world.time, 
 
   // Names of the landmarks you're passing.
   for (const { lm, p } of near) {
-    if (Math.hypot(p.x - o.x, p.y - o.y) > 14 * U) continue;
-    const s = toScreen(world, { x: p.x, y: p.y - landmarkHeight(lm) * 2.2 });
-    sign(ctx, s.x, s.y, landmarkName(lm));
+    if (Math.hypot(p.x - o.x, p.y - o.y) > 20 * U) continue;
+    const s = toScreen(world, p);
+    sign(ctx, s.x, s.y - 16, landmarkName(lm));
   }
   drawMinimap(ctx, world, m);
 
   if (world.bubble) {
-    const head = world.headPoint();
-    const s = toScreen(world, { x: head.x, y: head.y - 26 * world.scale });
-    drawBubble(ctx, world.bubble.text, s.x, s.y, 'pet');
+    const s = toScreen(world, world.headPoint());
+    drawBubble(ctx, world.bubble.text, s.x, s.y - 14, 'pet');
   }
   if (o.bubble) {
-    const s = toScreen(world, { x: o.x + o.dir * 10, y: o.y - 330 + o.crouch * 52 });
-    drawBubble(ctx, o.bubble.text, s.x, s.y, 'owner');
+    const s = toScreen(world, o);
+    drawBubble(ctx, o.bubble.text, s.x, s.y - 18, 'owner');
   }
   const credit = photo ? `${imagery.credit} · © OpenStreetMap contributors` : '© OpenStreetMap contributors';
   ctx.font = '500 10px Figtree, system-ui, sans-serif';

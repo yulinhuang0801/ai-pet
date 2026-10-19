@@ -133,7 +133,7 @@ test('walking a route from above turns its corners and keeps the pet on the leas
     maxGap = Math.max(maxGap, Math.hypot(w.body.x - w.owner.x, w.body.y - w.owner.y));
     if (w.routeMeters() > 220 && Math.abs(w.owner.x - 100 * U) < 20) {
       turned = true;
-      if (w.activity.phase === 'walk' && w.body.speed > 5) { northbound++; if (w.body.dir === w.owner.dir) sameWay++; }
+      if (w.activity.phase === 'walk' && w.body.speed > 5) { northbound++; if (Math.abs(Math.atan2(Math.sin(w.body.heading - w.owner.heading), Math.cos(w.body.heading - w.owner.heading))) < 0.6) sameWay++; }
     }
   }
   assert.ok(w.walk.arrived, 'reached the end');
