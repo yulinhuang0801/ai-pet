@@ -128,7 +128,11 @@ function separatePavements(sidewalks) {
 // --- the grid ---
 
 class Grid {
-  constructor() { this.chunks = new Map(); }
+  constructor() {
+    this.chunks = new Map();
+    // While a new area is painted, only its own chunks change.
+    this.only = null;
+  }
 
   key(ci, cj) { return `${ci},${cj}`; }
 
@@ -146,13 +150,13 @@ class Grid {
 
   set(i, j, id) {
     const c = this.chunkAt(i, j);
-    if (c) c.block[(j - c.cj * CHUNK) * CHUNK + (i - c.ci * CHUNK)] = id;
+    if (c && (!this.only || this.only.has(c))) c.block[(j - c.cj * CHUNK) * CHUNK + (i - c.ci * CHUNK)] = id;
   }
 
   // A building square: its height in metres and which building it is (for its roof colour).
   setBuilding(i, j, height, index) {
     const c = this.chunkAt(i, j);
-    if (!c) return;
+    if (!c || (this.only && !this.only.has(c))) return;
     const n = (j - c.cj * CHUNK) * CHUNK + (i - c.ci * CHUNK);
     c.block[n] = B.BUILDING;
     c.height ??= new Uint8Array(CHUNK * CHUNK);
@@ -160,6 +164,35 @@ class Grid {
     c.height[n] = Math.min(255, Math.round(height));
     c.house[n] = index + 1;
   }
+}
+
+// Blocks with nothing in them yet. With `outsideSolid`, squares that haven't
+// been built count as solid, so nobody walks off the edge of what's loaded.
+export function emptyBlocks({ outsideSolid = false } = {}) {
+  const grid = new Grid();
+  return {
+    grid, trees: [], outsideSolid, houses: 0, houseIds: new Map(),
+    get chunks() { return [...grid.chunks.values()]; },
+    get: (i, j) => grid.get(i, j),
+  };
+}
+
+// Builds the squares of a box (map metres: x0, y0, x1, y1, on chunk edges)
+// from map data that covers it, plus a margin so roads and buildings at the
+// edge come out whole. Squares outside the box are left alone.
+export function addArea(blocks, map, box) {
+  const grid = blocks.grid;
+  const fresh = new Set();
+  for (let ci = Math.floor(box.x0 / CHUNK); ci < Math.ceil(box.x1 / CHUNK); ci++) {
+    for (let cj = Math.floor(box.y0 / CHUNK); cj < Math.ceil(box.y1 / CHUNK); cj++) {
+      if (grid.chunks.has(grid.key(ci, cj))) continue;
+      grid.add(ci, cj);
+      fresh.add(grid.chunks.get(grid.key(ci, cj)));
+    }
+  }
+  grid.only = fresh;
+  paint(blocks, map, fresh, box);
+  grid.only = null;
 }
 
 // Every square whose middle is inside a shape (a flat list of x, y), row by row.
@@ -231,7 +264,8 @@ function hash(n) {
 // `line` the route itself, both in map metres. Squares within `reach` metres
 // of the route exist; the rest don't.
 export function buildBlocks(map, line, { reach = 90 } = {}) {
-  const grid = new Grid();
+  const blocks = emptyBlocks();
+  const grid = blocks.grid;
   // The chunks the route passes near.
   const pad = reach + CHUNK;
   const pts = [];
@@ -253,8 +287,21 @@ export function buildBlocks(map, line, { reach = 90 } = {}) {
     }
   });
 
+  paint(blocks, map, new Set(grid.chunks.values()));
+  return blocks;
+}
+
+// Paints map data onto the blocks: the `fresh` chunks start as grass. Trees are
+// kept only inside `box`, when given, so pieces of map that overlap don't
+// plant the same tree twice.
+function paint(blocks, map, fresh, box = null) {
+  const grid = blocks.grid;
+  // Buildings are numbered across every piece of map, for their roof colours.
+  const firstHouse = blocks.houses;
+  blocks.houses += map.buildings.length;
+
   // 1. Ground: grass everywhere (Arnis's default), then land use on top in order.
-  for (const c of grid.chunks.values()) c.block.fill(B.GRASS);
+  for (const c of fresh) c.block.fill(B.GRASS);
   for (const a of map.areas) {
     const id = AREA_BLOCK[a.k];
     if (id) fillPolygon(a.p, (i, j) => grid.set(i, j, id));
@@ -320,12 +367,21 @@ export function buildBlocks(map, line, { reach = 90 } = {}) {
   }
 
   // 3. Buildings, then fences and hedges.
-  map.buildings.forEach((b, index) => fillPolygon(b.p, (i, j) => grid.setBuilding(i, j, b.h ?? 7, index)));
+  map.buildings.forEach((b, index) => {
+    // The same building in two pieces of map gets the same number, so it stays one house.
+    let n = firstHouse + index;
+    if (b.id) {
+      if (!blocks.houseIds.has(b.id)) blocks.houseIds.set(b.id, n);
+      n = blocks.houseIds.get(b.id);
+    }
+    fillPolygon(b.p, (i, j) => grid.setBuilding(i, j, b.h ?? 7, n));
+  });
   for (const l of map.lines) {
     if (l.k === 'fence' || l.k === 'hedge') strokeLine(l.p, l.k === 'hedge' ? 0.6 : 0.35, (i, j) => grid.set(i, j, l.k === 'hedge' ? B.HEDGE : B.FENCE));
   }
 
-  return { grid, chunks: [...grid.chunks.values()], trees: placeTrees(map, grid), get: (i, j) => grid.get(i, j) };
+  const inBox = (t) => !box || (t.x >= box.x0 && t.x < box.x1 && t.y >= box.y0 && t.y < box.y1);
+  blocks.trees.push(...placeTrees(map, grid).filter(inBox));
 }
 
 // Trees: the ones the map has, plus a row along residential streets where it
@@ -368,6 +424,32 @@ function placeTrees(map, grid) {
 }
 
 // Can you stand on this square? (Off the grid counts as open ground.)
+// Streets, pavements and paths: where a walk can always go on from.
+export const STREETS = new Set([B.ASPHALT, B.PAVEMENT, B.KERB, B.PAVING, B.DIRT, B.GRAVEL, B.CYCLEWAY, B.ZEBRA, B.LINE, B.LINE_YELLOW, B.PARKING]);
+
+// The open square nearest a point (map metres), searching out to `reach`
+// metres, or null. Its middle is returned. With `only`, just squares of those kinds.
+export function nearestOpen(blocks, x, y, reach = 40, only = null) {
+  let best = null;
+  // Rings of squares outward; a square in a later ring can still be nearer, so look one ring on.
+  for (let r = 0; r <= reach && !(best && r > best.d + 1); r++) {
+    for (let j = Math.floor(y) - r; j <= Math.floor(y) + r; j++) {
+      for (let i = Math.floor(x) - r; i <= Math.floor(x) + r; i++) {
+        if (Math.max(Math.abs(i - Math.floor(x)), Math.abs(j - Math.floor(y))) !== r) continue;
+        if (!walkable(blocks, i + 0.5, j + 0.5)) continue;
+        if (only && !only.has(blocks.get(i, j))) continue;
+        // Somewhere with room to stand, not a gap between two houses.
+        if (![[1, 0], [-1, 0], [0, 1], [0, -1]].every(([di, dj]) => walkable(blocks, i + di + 0.5, j + dj + 0.5))) continue;
+        const d = Math.hypot(i + 0.5 - x, j + 0.5 - y);
+        if (!best || d < best.d) best = { x: i + 0.5, y: j + 0.5, d };
+      }
+    }
+  }
+  return best ? { x: best.x, y: best.y } : null;
+}
+
 export function walkable(blocks, x, y) {
-  return !SOLID.has(blocks.get(Math.floor(x), Math.floor(y)));
+  const id = blocks.get(Math.floor(x), Math.floor(y));
+  if (id === B.NONE) return !blocks.outsideSolid;
+  return !SOLID.has(id);
 }

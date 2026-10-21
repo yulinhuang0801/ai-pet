@@ -1124,10 +1124,10 @@ export class World {
     this.walk = {
       place, distance: 0, startedAt: this.time, critter: null, tension: 0,
       find: null, nextFindAt: 0, offLeash: false,
-      route: place.route ?? null, visited: new Set(), arrived: false,
+      route: place.route ?? null, area: place.area ?? null, visited: new Set(), arrived: false,
     };
     // A route with its map is walked from above; anywhere else, side-on.
-    this.space = place.route?.map ? mapSpace : sideSpace;
+    this.space = place.route?.map || place.area ? mapSpace : sideSpace;
     this.scheduleFind(70, 140);
     this.placeForWalk();
     noteHabit(p, 'walks');

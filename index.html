@@ -133,14 +133,12 @@
 
       <div class="actions" role="toolbar" aria-label="Things to do" id="home-actions">
         <button type="button" id="act-walk">Go for a walk</button>
-        <button type="button" id="act-map">Plan a route on the map</button>
+        <button type="button" id="act-map">Walk on the map</button>
         <button type="button" id="act-call">Call</button>
         <button type="button" class="ghost" id="act-sound" aria-pressed="true">Sound on</button>
         <button type="button" class="ghost" id="act-view">Try 3D (preview)</button>
       </div>
       <div class="actions" role="toolbar" aria-label="Walking" id="walk-actions" hidden>
-        <button type="button" id="walk-back" class="hold">Walk back</button>
-        <button type="button" id="walk-on" class="hold primary">Walk on</button>
         <button type="button" id="walk-jog" class="ghost" aria-pressed="false">Jog</button>
         <label class="walk-look" id="walk-look-wrap" hidden>
           <span class="sr-only">Map look</span>
@@ -188,7 +186,7 @@
 
       <section class="map-panel" id="map-panel" hidden aria-labelledby="map-title">
         <div class="picker-head">
-          <h3 id="map-title">Plan a walk on the map</h3>
+          <h3 id="map-title">Walk somewhere real</h3>
           <button type="button" class="ghost" id="map-close">Close</button>
         </div>
         <form class="map-search" id="map-search">
@@ -198,37 +196,18 @@
           <button type="button" class="ghost" id="map-locate">Near me</button>
         </form>
         <ul class="map-results" id="map-results"></ul>
-        <div class="map-options">
-          <label class="check"><input type="checkbox" id="map-snap" checked> Stick to streets and paths</label>
-          <span class="map-loop">
-            <button type="button" class="ghost small" id="map-loop">Suggest a loop</button>
-            <label for="map-loop-length" class="sr-only">Loop length</label>
-            <select id="map-loop-length">
-              <option value="1000">1 km</option>
-              <option value="2000" selected>2 km</option>
-              <option value="3000">3 km</option>
-            </select>
-          </span>
-          <button type="button" class="ghost small" id="map-photos">Satellite photos…</button>
-        </div>
         <p class="map-notice" id="map-notice" hidden></p>
         <div class="map" id="map"></div>
         <div class="map-tools">
           <span id="map-distance"></span>
-          <button type="button" class="ghost small" id="map-undo">Undo point</button>
-          <button type="button" class="ghost small" id="map-clear">Clear</button>
-          <button type="button" class="primary" id="map-build">Build this walk</button>
+          <button type="button" class="ghost small" id="map-photos">Satellite photos…</button>
+        </div>
+        <div class="map-save" id="map-start" hidden>
+          <label for="map-name" class="sr-only">Name this spot</label>
+          <input id="map-name" autocomplete="off" maxlength="40">
+          <button type="button" class="primary" id="map-save">Start walking here</button>
         </div>
         <p class="map-version" id="map-version"></p>
-        <div class="map-result" id="map-result" hidden>
-          <p id="map-summary"></p>
-          <div class="biome-strip" id="map-strip" aria-hidden="true"></div>
-          <div class="map-save">
-            <label for="map-name" class="sr-only">Name this walk</label>
-            <input id="map-name" autocomplete="off" maxlength="40">
-            <button type="button" class="primary" id="map-save">Save and walk</button>
-          </div>
-        </div>
       </section>
 
       <p class="hint" id="hint"></p>
@@ -304,7 +283,7 @@
         <p class="help">Plan a walk on a real map, or add a photo of anywhere at all, then walk <span class="pet-name"></span> there. Photos can also be home.</p>
         <ul class="place-list" id="places"></ul>
         <div class="manage">
-          <button type="button" id="plan-route">Plan a route on the map</button>
+          <button type="button" id="plan-route">Walk on the map</button>
           <label class="file-button">
             <input type="file" id="place-file" accept="image/*">
             <span>Add a photo</span>

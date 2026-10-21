@@ -81,6 +81,11 @@ export function corridorBoxes(points, pad = 90, piece = 350) {
 // whatever lies near the route. Each line asks for one tag, which Overpass
 // can look up quickly.
 export function overpassQuery(points) {
+  return boxesQuery(corridorBoxes(points));
+}
+
+// The same query for some boxes: [south, west, north, east] each.
+export function boxesQuery(boxes) {
   const asks = [
     'way["building"]', 'way["highway"]', 'way["landuse"]', 'way["leisure"]', 'way["natural"]', 'way["water"]',
     'way["waterway"]', 'way["railway"]', 'way["amenity"="parking"]',
@@ -89,7 +94,7 @@ export function overpassQuery(points) {
     'node["natural"="tree"]', 'node["amenity"~"^(bench|cafe|fountain|drinking_water|restaurant|ice_cream)$"]',
     'node["leisure"~"^(playground|dog_park)$"]', 'node["shop"]',
   ];
-  const lines = corridorBoxes(points).flatMap((b) => {
+  const lines = boxes.flatMap((b) => {
     const box = b.map((v) => v.toFixed(6)).join(',');
     return asks.map((a) => `  ${a}(${box});`);
   });
@@ -191,6 +196,28 @@ function landmarkKind(tags) {
   if (LANDMARKS[tags.amenity]) return tags.amenity;
   if (tags.shop) return 'shop';
   return null;
+}
+
+// The landmarks in some map data, with their place in map metres (x east, y
+// south) and an id that stays the same whichever piece of map they came in.
+export function landmarksIn(osm, project) {
+  const out = [];
+  for (const el of osm.elements ?? []) {
+    const tags = el.tags ?? {};
+    const kind = landmarkKind(tags);
+    if (!kind) continue;
+    let at = null;
+    if (el.type === 'node') at = [el.lat, el.lon];
+    else if (el.geometry?.length) {
+      const lats = el.geometry.map((g) => g.lat);
+      const lons = el.geometry.map((g) => g.lon);
+      at = [(Math.min(...lats) + Math.max(...lats)) / 2, (Math.min(...lons) + Math.max(...lons)) / 2];
+    }
+    if (!at) continue;
+    const [e, n] = project(at);
+    out.push({ d: `${el.type}${el.id}`, kind, name: tags.name ?? null, x: Math.round(e * 10) / 10, y: Math.round(-n * 10) / 10 });
+  }
+  return out;
 }
 
 // Split OSM elements into the shapes the classifier needs, in flat metres.

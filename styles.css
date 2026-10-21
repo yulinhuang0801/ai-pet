@@ -322,6 +322,7 @@ label.small.file-button {
 .place-tile.add { border: 1px dashed var(--line); cursor: pointer; position: relative; }
 .thumb-art { display: block; background: var(--surface-2); }
 .thumb-art.park { background: linear-gradient(#9fc9ec 0 45%, #8dbd6e 45% 70%, #d8c6a0 70% 85%, #8dbd6e 85%); }
+.thumb-art.spot { display: grid; place-items: center; font-size: 1.8rem; background: linear-gradient(135deg, #cfe6c1, #e8efe0); }
 .thumb-art.room { background: linear-gradient(#d3ddcc 0 62%, #c79a64 62%); }
 .thumb-art.plus { display: grid; place-items: center; font-size: 1.8rem; color: var(--muted); }
 

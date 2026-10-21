@@ -212,7 +212,8 @@ export function extractMap(osm, project, line, pad = 110) {
   const addArea = (kind, ring, extra = {}) => {
     const shape = clipPolygon(simplify(ring.map(xy), kind === 'building' ? 0.25 : 0.8), box);
     if (shape.length < 3) return;
-    if (kind === 'building') buildings.push({ p: flat(shape), h: extra.h });
+    // A building keeps its map id, so pieces of it in neighbouring squares of map stay one house.
+    if (kind === 'building') buildings.push(extra.id ? { p: flat(shape), h: extra.h, id: extra.id } : { p: flat(shape), h: extra.h });
     else areas.push({ k: kind, p: flat(shape) });
   };
 
@@ -229,13 +230,13 @@ export function extractMap(osm, project, line, pad = 110) {
       const kind = t.building ? 'building' : areaKind(t);
       if (!kind) continue;
       const outers = (el.members ?? []).filter((m) => m.role === 'outer' && m.geometry).map((m) => m.geometry);
-      for (const ring of stitchRings(outers)) addArea(kind, ring, { h: buildingHeight(t) });
+      for (const ring of stitchRings(outers)) addArea(kind, ring, { h: buildingHeight(t), id: `r${el.id}` });
       continue;
     }
     const geom = el.geometry;
     if (!geom || geom.length < 2) continue;
     const closed = geom.length > 3 && geom[0].lat === geom[geom.length - 1].lat && geom[0].lon === geom[geom.length - 1].lon;
-    if (t.building && closed) { addArea('building', geom, { h: buildingHeight(t) }); continue; }
+    if (t.building && closed) { addArea('building', geom, { h: buildingHeight(t), id: el.id ? `w${el.id}` : undefined }); continue; }
     const area = closed ? areaKind(t) : null;
     if (area) { addArea(area, geom); continue; }
     const kind = lineKind(t);

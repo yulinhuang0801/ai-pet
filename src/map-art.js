@@ -15,6 +15,7 @@ import {
 import { sign, landmarkName } from './route-art.js';
 import { projector } from './route.js';
 import { buildBlocks, B, CHUNK } from './blocks.js';
+import { TILE } from './explore.js';
 
 // Screen pixels per map unit, which the mouse wheel changes. On satellite
 // photos it can't go closer than the photos are sharp (`photoCap`).
@@ -70,11 +71,12 @@ function pathOf(flat, close) {
 
 function prepare(route) {
   let m = prepared.get(route);
-  if (m) return m;
+  // An explored area grows as you walk; draw it afresh when it does.
+  if (m && m.version === route.version) return m;
   const map = route.map;
   m = {
     areas: map.areas.map((a) => ({ k: a.k, box: boxOf(a.p), path: pathOf(a.p, true) })),
-    lines: map.lines.map((l) => ({ k: l.k, box: boxOf(l.p), path: pathOf(l.p, false) })),
+    lines: map.lines.map((l) => ({ k: l.k, w: l.w, box: boxOf(l.p), path: pathOf(l.p, false) })),
     buildings: map.buildings.map((b, i) => {
       const pts = [];
       for (let k = 0; k < b.p.length; k += 2) pts.push([b.p[k] * U, b.p[k + 1] * U]);
@@ -103,6 +105,7 @@ function prepare(route) {
   m.origin = [(Math.min(...lats) + Math.max(...lats)) / 2, (Math.min(...lons) + Math.max(...lons)) / 2];
   const one = projector(m.origin)([m.origin[0] + 0.001, m.origin[1] + 0.001]);
   m.perDegree = { x: one[0] / 0.001, y: one[1] / 0.001 };
+  m.version = route.version;
   prepared.set(route, m);
   return m;
 }
@@ -719,10 +722,61 @@ function drawBlocks(ctx, m, route, cam, built) {
   ctx.imageSmoothingEnabled = true;
 }
 
+// Exploring: a small map of what's loaded around you, your start, and you.
+function drawAreaMap(ctx, world, area) {
+  const w = 150;
+  const h = 104;
+  const x0 = VIEW_W - w - 12;
+  const y0 = 12;
+  const o = world.owner;
+  const span = 600; // metres across
+  const k = w / span;
+  const at = (x, y) => [x0 + w / 2 + (x - o.x / U) * k, y0 + h / 2 + (y - o.y / U) * k];
+  ctx.save();
+  ctx.fillStyle = 'rgba(250, 248, 240, 0.88)';
+  ctx.strokeStyle = 'rgba(31, 42, 36, 0.25)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(x0, y0, w, h, 10);
+  ctx.fill();
+  ctx.stroke();
+  ctx.clip();
+  // Each loaded square, and roads in it.
+  ctx.fillStyle = 'rgba(118, 176, 84, 0.45)';
+  for (const [key, t] of area.explore.tiles) {
+    if (t.state !== 'ready') continue;
+    const [i, j] = key.split(',').map(Number);
+    const [ax, ay] = at(i * TILE, j * TILE);
+    ctx.fillRect(ax, ay, TILE * k, TILE * k);
+  }
+  ctx.strokeStyle = 'rgba(80, 84, 92, 0.7)';
+  ctx.lineWidth = 1.2;
+  for (const l of area.map.lines) {
+    if (l.k !== 'major' && l.k !== 'minor') continue;
+    ctx.beginPath();
+    for (let i = 0; i < l.p.length; i += 2) ctx[i ? 'lineTo' : 'moveTo'](...at(l.p[i], l.p[i + 1]));
+    ctx.stroke();
+  }
+  const [sx, sy] = at(0, 0);
+  ctx.fillStyle = '#1d6d64';
+  ctx.beginPath();
+  ctx.arc(sx, sy, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#e8566f';
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x0 + w / 2, y0 + h / 2, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
 // --- the whole scene ---
 
 export function drawMapWalk(ctx, world, { date = new Date(), time = world.time, images = {} } = {}) {
-  const route = world.walk.route;
+  // A saved route, or the area explored from a pinned spot: both have a map, landmarks and a line.
+  const route = world.walk.route ?? world.walk.area;
   const m = prepare(route);
   if (imagery) {
     // Never enlarge the sharpest photos more than about two times.
@@ -782,8 +836,9 @@ export function drawMapWalk(ctx, world, { date = new Date(), time = world.time, 
     if (p.x < view.x0 || p.x > view.x1 || p.y < view.y0 || p.y > view.y1) continue;
     near.push({ lm, p });
   }
-  const start = { x: route.line[0] * U, y: route.line[1] * U };
-  const end = { x: route.line[route.line.length - 2] * U, y: route.line[route.line.length - 1] * U };
+  // Where the route starts and ends; exploring, where you started.
+  const start = route.line.length ? { x: route.line[0] * U, y: route.line[1] * U } : { x: 0, y: 0 };
+  const end = route.line.length ? { x: route.line[route.line.length - 2] * U, y: route.line[route.line.length - 1] * U } : null;
 
   const w = world.walk;
   if (w.find) {
@@ -823,7 +878,7 @@ export function drawMapWalk(ctx, world, { date = new Date(), time = world.time, 
   // Landmarks, start and finish on top, as markers.
   for (const { lm, p } of near) drawBadge(ctx, p, LANDMARK_ICONS[lm.kind]);
   drawEnd(ctx, start, false);
-  drawEnd(ctx, end, true);
+  if (end) drawEnd(ctx, end, true);
 
   if (world.drag?.item === 'treat') treat(world.drag.x, world.drag.y, 1.7, -0.3);
   drawParticles(ctx, world);
@@ -841,7 +896,22 @@ export function drawMapWalk(ctx, world, { date = new Date(), time = world.time, 
     const s = toScreen(world, p);
     sign(ctx, s.x, s.y - 16, landmarkName(lm));
   }
-  drawMinimap(ctx, world, m);
+  if (route.explore) {
+    drawAreaMap(ctx, world, route);
+    if (!route.explore.ready(o.x / U, o.y / U) || route.explore.loading) {
+      ctx.font = '600 13px Figtree, system-ui, sans-serif';
+      const text = route.explore.ready(o.x / U, o.y / U) ? 'Loading more of the map…' : 'Loading the map around you…';
+      const tw = ctx.measureText(text).width;
+      ctx.fillStyle = 'rgba(31, 42, 36, 0.82)';
+      ctx.beginPath();
+      ctx.roundRect(VIEW_W / 2 - tw / 2 - 12, 12, tw + 24, 28, 14);
+      ctx.fill();
+      ctx.fillStyle = '#f4f7f4';
+      ctx.textAlign = 'center';
+      ctx.fillText(text, VIEW_W / 2, 31);
+      ctx.textAlign = 'left';
+    }
+  } else drawMinimap(ctx, world, m);
 
   if (world.bubble) {
     const s = toScreen(world, world.headPoint());

@@ -21,7 +21,7 @@ Everything happens with your hands in the scene. You appear there as a character
 - **Play catch**: grab the ball and fling it. Throws follow real physics: gravity, bounces, walls and rolling. A keen dog play-bows while you hold the ball and may catch it mid-air. Cats mostly don't fetch.
 - **Pet**: press and hold on your pet. Stroking it feels better than a still hand. Cats have a limit and will tell you when you reach it.
 - **Walk**: pick a place, then hold on either side of yourself (or use the arrow keys) to walk. The leash sags and pulls tight. Your pet stops to sniff until you tug, lunges at squirrels and drags you along, and cats often flop down in protest.
-- **Walk real routes, seen from above**: plan a walk on a real map (OpenStreetMap). Search for a place and click where you want to go: the route follows real streets and footpaths between your clicks instead of cutting through houses. Or press **Suggest a loop** for a round walk of 1, 2 or 3 km. The app then saves the map around your route (streets, paths, houses, parks, water, trees, benches, cafés, fountains, playgrounds and dog parks) and you walk it from above, turning its real corners. Your pet roams around you on the leash, checks out the landmarks, and finds things that suit the place (seashells only near water). A small map in the corner shows where you are. Walk or jog; scroll to zoom. Saved routes work offline afterwards.
+- **Walk anywhere real, seen from above**: open the map, search for a place or click one, and start walking from the pin. There's no route to plan: walk with the arrow keys, or press where you want to go. The map loads around you as you go, 256 m at a time, the way Minecraft loads chunks: streets, pavements, houses, parks, water, trees, benches, cafés, fountains, playgrounds and dog parks. Your pet roams around you on the leash, checks out the landmarks, and finds things that suit the place (seashells only near water). Spots you pinned are kept in Your places. A small map in the corner shows what's loaded and where you started. Walk or jog; scroll to zoom. Routes saved with earlier versions still work.
 - **Three looks for map walks**: *blocks* (the default), where the map around your route is rebuilt as a grid of 1 m blocks the way Minecraft builds a world, with roads, pavements, crossings, lane lines, gardens, houses and trees, following the rules of [Arnis](https://github.com/louis-e/arnis). Each block is a little pixel-art picture, and houses, fences, hedges and water are solid: walk anywhere with the arrow keys or by pressing where you want to go, and your pet can't go through walls either; *drawn* from the map data (streets with their real widths, crossings, pavements, houses, parks; OpenStreetMap rarely records street trees one by one, so residential streets get a row of trees where there's room), or *satellite*: the real place from above. Satellite photos need a free key from [Esri](https://location.arcgis.com/) (no card, 2 million tiles a month) or [Google's Map Tiles API](https://developers.google.com/maps/documentation/tile/satellite) (billing account, 100,000 tiles a month free); paste it in once and it stays in your browser.
 - **Your own places**: upload any photo, whether your street, your park or something sillier, and walk your pet there or make it your home backdrop. Nothing is refused: it's your space.
 - **Make it yours**: use your own picture as the treat, and change your look by clicking yourself in the scene.
@@ -57,7 +57,7 @@ Add `?speed=60` to the URL to run time 60× faster while testing.
 
 The pet is saved in the browser's `localStorage`. Photos and voice clips are kept in IndexedDB. Recording and speech recognition need the page served over HTTPS or from localhost.
 
-Keyboard shortcuts at home: F feeds, T gives a treat, B throws the ball, W starts a walk, C calls your pet. On walks, the arrow keys walk (on a map, the way they point along your route).
+Keyboard shortcuts at home: F feeds, T gives a treat, B throws the ball, W starts a walk, C calls your pet. On walks, the arrow keys walk (on a map, in any direction).
 
 ## Code layout
 
@@ -77,7 +77,8 @@ Keyboard shortcuts at home: F feeds, T gives a treat, B throws the ball, W start
 | `src/topdown-art.js` | You and your pet seen from above, for map walks |
 | `src/imagery.js` | Satellite photo services (Esri or Google) and checking a key |
 | `src/route-art.js` | Draws a route walk side-on (routes saved before maps were kept) and the landmark pictures |
-| `src/map-planner.js` | The map: search, click out a route along real paths or get a loop, fetch OpenStreetMap data, save the walk |
+| `src/map-planner.js` | The map: search for a place or click one, pin where your walk starts; fetching OpenStreetMap data |
+| `src/explore.js` | Walking from a pin: loads the map around you in 256 m squares as you go and builds them into blocks |
 | `vendor/leaflet/` | Leaflet, the map library |
 | `src/commands.js` | Turns what you type or say into name, cue, topic and tone |
 | `src/world.js` | The pet's behaviour: activities, decision making, reactions to you. No coordinates; it asks the space |

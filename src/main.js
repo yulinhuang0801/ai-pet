@@ -18,10 +18,12 @@ import { imagerySource } from './imagery.js';
 import { SKIN_TONES, HAIR_COLORS, HAIR_STYLES, TOP_COLORS, BOTTOM_COLORS, defaultOwner } from './owner-look.js';
 import { Voice, VOICE_SLOTS } from './sound.js';
 import { MediaStore, photoToBlob, blobToImage } from './media-store.js';
-import { RoutePlanner, routeThumbnail, rebuildRoute, withoutMap } from './map-planner.js';
+import { MapPlanner, routeThumbnail, rebuildRoute, withoutMap, overpass } from './map-planner.js';
+import { Explorer } from './explore.js';
+import { MAP_UNITS_PER_METER } from './space-map.js';
 
 // Shown under the route planner, so it's easy to tell which version a browser is running.
-const VERSION = '2026-10-21b';
+const VERSION = '2026-10-22a';
 const SAVE_KEY = 'ai-pet/v1';
 const PREFS_KEY = 'ai-pet/prefs';
 const speed = Number(new URLSearchParams(location.search).get('speed')) || 1;
@@ -90,7 +92,7 @@ function fitCanvas(canvas) {
 function use3D() { return Boolean(three) && prefs.get('view', '2d') === '3d'; }
 
 // Walking a real route, seen from above on its map (always in 2D).
-function onMap(w = world) { return Boolean(w?.walk?.track); }
+function onMap(w = world) { return Boolean(w?.walk?.track || w?.walk?.area); }
 
 // Show the WebGL canvas under the 2D one, or hide it.
 function setStack(gl, on) {
@@ -418,17 +420,6 @@ scene.addEventListener('wheel', (e) => {
 scene.addEventListener('pointercancel', endPointer);
 scene.addEventListener('lostpointercapture', endPointer);
 
-// Hold-to-walk buttons, for touch screens and keyboards.
-for (const [id, dir] of [['walk-back', -1], ['walk-on', 1]]) {
-  const b = $(id);
-  const stop = () => world?.setWalkInput(0);
-  b.addEventListener('pointerdown', () => world?.setWalkInput(dir));
-  b.addEventListener('pointerup', stop);
-  b.addEventListener('pointerleave', stop);
-  b.addEventListener('pointercancel', stop);
-  b.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') world?.setWalkInput(dir); });
-  b.addEventListener('keyup', stop);
-}
 
 // --- Satellite photos on map walks ---
 
@@ -645,7 +636,7 @@ async function loadPlaces() {
 }
 
 // Places are photos, saved map routes, or the built-in room and park.
-const placeKind = (p) => (p.kind === 'route' ? 'route' : p.builtIn ? (p.id === 'park' ? 'park' : 'room') : 'photo');
+const placeKind = (p) => (p.kind === 'route' || p.kind === 'spot' ? p.kind : p.builtIn ? (p.id === 'park' ? 'park' : 'room') : 'photo');
 const routeThumbs = new Map();
 
 function placeThumb(p) {
@@ -654,10 +645,15 @@ function placeThumb(p) {
     if (!routeThumbs.has(p.id)) routeThumbs.set(p.id, routeThumbnail(p.route));
     return `<img src="${routeThumbs.get(p.id)}" alt="">`;
   }
+  if (p.kind === 'spot') return '<span class="thumb-art spot" aria-hidden="true">📍</span>';
   return `<span class="thumb-art ${p.id}"></span>`;
 }
 
-const walkPlace = (p) => ({ id: p.id, kind: placeKind(p), name: p.name, route: p.route });
+// A spot on the map is walked by exploring from it, the map loading as you go.
+const walkPlace = (p) => ({
+  id: p.id, kind: placeKind(p), name: p.name, route: p.route,
+  area: p.kind === 'spot' ? new Explorer(p.at, { fetchOsm: (q) => overpass(q, 30000) }).area : undefined,
+});
 
 // Walk a place. Routes saved before walks were drawn from above have no map
 // yet: fetch it once and keep it.
@@ -690,7 +686,7 @@ function renderPicker() {
     return li;
   }));
   const plan = document.createElement('li');
-  plan.innerHTML = `<button type="button" class="place-tile add"><span class="thumb-art plus" aria-hidden="true">+</span><span>Plan a route on the map</span></button>`;
+  plan.innerHTML = `<button type="button" class="place-tile add"><span class="thumb-art plus" aria-hidden="true">+</span><span>Walk on the map</span></button>`;
   plan.querySelector('button').onclick = () => openPlanner();
   ul.append(plan);
   const add = document.createElement('li');
@@ -723,16 +719,15 @@ async function addPlace(file) {
 
 // --- Map routes ---
 
-const planner = new RoutePlanner({
+const planner = new MapPlanner({
   panel: $('map-panel'), map: $('map'), search: $('map-search'), query: $('map-query'), results: $('map-results'),
-  locate: $('map-locate'), notice: $('map-notice'), distance: $('map-distance'), undo: $('map-undo'),
-  clear: $('map-clear'), build: $('map-build'), result: $('map-result'), summary: $('map-summary'),
-  strip: $('map-strip'), name: $('map-name'), save: $('map-save'),
-  snap: $('map-snap'), loop: $('map-loop'), loopLength: $('map-loop-length'),
+  locate: $('map-locate'), notice: $('map-notice'), distance: $('map-distance'), start: $('map-start'),
+  name: $('map-name'), save: $('map-save'),
 }, {
   toast,
-  onSave: async ({ name, route }) => {
-    const record = { id: `r${Date.now().toString(36)}`, name, kind: 'route', route, added: Date.now() };
+  // A pinned spot is kept as a place, so you can walk there again.
+  onStart: async ({ name, at }) => {
+    const record = { id: `s${Date.now().toString(36)}`, name, kind: 'spot', at, added: Date.now() };
     await media.put('places', record);
     places.push(record);
     renderPlaces();
@@ -773,8 +768,8 @@ function renderPlaces() {
     const li = document.createElement('li');
     li.className = 'place-row';
     const isHome = world.pet.home === p.id || (p.id === 'room' && !world.pet.home);
-    const route = p.kind === 'route';
-    const meta = isHome ? 'Home' : route ? `Map route · ${p.route.length >= 1000 ? `${(p.route.length / 1000).toFixed(1)} km` : `${p.route.length} m`}` : p.walkOnly ? 'For walks' : '';
+    const route = p.kind === 'route' || p.kind === 'spot';
+    const meta = isHome ? 'Home' : p.kind === 'spot' ? 'Map spot' : route ? `Map route · ${p.route.length >= 1000 ? `${(p.route.length / 1000).toFixed(1)} km` : `${p.route.length} m`}` : p.walkOnly ? 'For walks' : '';
     li.innerHTML = `${placeThumb(p)}<div class="place-info"><input class="place-name" value="${escapeHtml(p.name)}" ${p.builtIn ? 'disabled' : ''} aria-label="Place name"><span class="meta">${meta}</span></div><div class="place-actions"></div>`;
     const actions = li.querySelector('.place-actions');
     const btn = (label, fn, cls = 'ghost') => {
@@ -909,7 +904,7 @@ function escapeHtml(s) {
 
 function contextHint() {
   const w = world;
-  if (onMap(w)) return 'Hold Walk on to follow your route, or walk anywhere with the arrow keys or by pressing where you want to go. Scroll to zoom. Press and hold your pet to give them a fuss.';
+  if (onMap(w)) return 'Walk with the arrow keys, or press where you want to go. Scroll to zoom. Press and hold your pet to give them a fuss.';
   if (w.scene === 'park') return 'Hold on either side of you, or the arrow keys, to walk. Press and hold your pet to give them a fuss.';
   if (w.drag?.item === 'scoop') return 'Hold the scoop over the bowl to pour. Let go when it looks like enough.';
   if (w.drag?.item === 'treat') return 'Hold the treat up high to lure a sit, or down on the floor to lure lying down. Let go at their mouth to hand it over.';
@@ -1151,6 +1146,8 @@ function frame(now) {
       world.update(step);
       left -= step;
     }
+    // Exploring from a pinned spot: load the map ahead of you.
+    world.walk?.area?.explore.update(world.owner.x / MAP_UNITS_PER_METER, world.owner.y / MAP_UNITS_PER_METER);
     const ctx = fitCanvas(scene);
     const opts = { date, dt: dt * speed, backdrops: backdrops(world), images: { treat: treatImage } };
     const mapped = onMap(world);

@@ -19,7 +19,7 @@ import { sideSpace, GROUND, LEASH } from './space-side.js';
 import { measureLine, pointAlong, distanceAlong } from './route-map.js';
 import { biomeAt } from './route.js';
 import { pickFind } from './finds.js';
-import { buildBlocks, walkable, B } from './blocks.js';
+import { buildBlocks, walkable, nearestOpen, STREETS, B } from './blocks.js';
 
 export const MAP_UNITS_PER_METER = 64;
 const U = MAP_UNITS_PER_METER;
@@ -82,10 +82,23 @@ export const mapSpace = {
 
   placeForWalk() {
     const w = this.walk;
+    w.side = 1; // which side of the path the pet trots on
+    if (!w.route) {
+      // Exploring from a pinned spot: no route, the map loads around you.
+      w.track = null;
+      w.length = 0;
+      w.blocks = w.area.blocks;
+      Object.assign(this.owner, {
+        x: 0, y: 0, s: 0, dir: 1, heading: 0, vx: 0, targetX: null, walkInput: 0, hand: null, steer: null, goal: null,
+      });
+      Object.assign(this.body, { x: 1.7 * U, y: 0.6 * U, vx: 0, vy: 0, dir: 1, heading: 0 });
+      this.mapCam = { x: 0, y: 0 };
+      if (this.ball.state === 'mouth' || this.ball.state === 'air') { this.ball.state = 'ground'; this.ball.y = GROUND - 9; }
+      return;
+    }
     w.track = measureLine(w.route.line);
     w.length = w.track.length * U;
     w.blocks = buildBlocks(w.route.map, w.route.line);
-    w.side = 1; // which side of the path the pet trots on
     const start = routePoint(this, 0);
     const heading = Math.atan2(start.ty, start.tx);
     Object.assign(this.owner, {
@@ -206,6 +219,7 @@ export const mapSpace = {
   // Which way along the route a point is from the owner: 1 onward, -1 back.
   walkDirToward(point) {
     const o = this.owner;
+    if (!this.walk.track) return point.x >= o.x ? 1 : -1;
     const here = routePoint(this, o.s);
     const along = (point.x - o.x) * here.tx + (point.y - o.y) * here.ty;
     return along >= 0 ? 1 : -1;
@@ -215,16 +229,20 @@ export const mapSpace = {
 
   walkedMeters() { return this.walk.distance / U; },
 
-  routeMeters() { return this.owner.s / U; },
+  // How far along the route you are, or (exploring) how far you've walked.
+  routeMeters() { return this.walk.track ? this.owner.s / U : this.walk.distance / U; },
 
-  biomeHere() { return biomeAt(this.walk.route, this.routeMeters()); },
+  biomeHere() {
+    const w = this.walk;
+    return w.route ? biomeAt(w.route, this.routeMeters()) : blockBiome(w.blocks, this.owner.x / U, this.owner.y / U);
+  },
 
   // A landmark the pet hasn't checked out yet, close by and not behind you.
   landmarkAhead() {
     const w = this.walk;
     const o = this.owner;
     const f = facing(o);
-    const lm = w.route.landmarks.find((l) => {
+    const lm = (w.route ?? w.area).landmarks.find((l) => {
       if (w.visited.has(l.d) || l.x === undefined) return false;
       const dx = l.x * U - o.x;
       const dy = l.y * U - o.y;
@@ -278,6 +296,28 @@ export const mapSpace = {
   moveOwner(dt) {
     const o = this.owner;
     const w = this.walk;
+    // Exploring: wait for the map under you, then start on open ground near the pin.
+    if (w.area) {
+      const explore = w.area.explore;
+      if (!w.placed && explore.ready(0, 0)) {
+        w.placed = true;
+        // The nearest street or pavement, so you're not shut in a back garden; else any open ground.
+        const open = nearestOpen(w.blocks, o.x / U, o.y / U, 60, STREETS) ?? nearestOpen(w.blocks, o.x / U, o.y / U);
+        if (open) {
+          const dx = open.x * U - o.x;
+          const dy = open.y * U - o.y;
+          o.x += dx;
+          o.y += dy;
+          this.body.x += dx;
+          this.body.y += dy;
+          this.mapCam.x += dx;
+          this.mapCam.y += dy;
+          const pet = nearestOpen(w.blocks, this.body.x / U, this.body.y / U, 6);
+          if (pet) { this.body.x = pet.x * U; this.body.y = pet.y * U; }
+        }
+      }
+      if (!explore.ready(o.x / U, o.y / U)) { o.speed = 0; return; }
+    }
     let dir = null;
     let onRoute = false;
     if (o.goal) {
@@ -288,7 +328,7 @@ export const mapSpace = {
     } else if (o.steer) {
       const d = Math.hypot(o.steer.x, o.steer.y) || 1;
       dir = { x: o.steer.x / d, y: o.steer.y / d };
-    } else if (o.walkInput) {
+    } else if (o.walkInput && w.track) {
       // Head for a spot a few metres along the route, which brings you back to it if you wandered off.
       const target = routePoint(this, clamp(o.s + o.walkInput * 3 * U, 0, w.length));
       const dx = target.x - o.x;
@@ -308,7 +348,7 @@ export const mapSpace = {
     }
     const moved = Math.hypot(o.x - before.x, o.y - before.y);
     // How far along the route you are: the nearest point of it, near where you were.
-    o.s = distanceAlong(w.track, o.x / U, o.y / U, o.s / U - 25, o.s / U + 25) * U;
+    if (w.track) o.s = distanceAlong(w.track, o.x / U, o.y / U, o.s / U - 25, o.s / U + 25) * U;
     w.distance += moved;
     this.earn('walk', moved / U);
     if (!w.find && w.distance >= w.nextFindAt) this.spawnFind();
@@ -316,10 +356,12 @@ export const mapSpace = {
       w.find = null;
       this.scheduleFind(60, 120);
     }
-    const end = routePoint(this, w.length);
-    if (!w.arrived && o.s >= w.length - U && Math.hypot(end.x - o.x, end.y - o.y) < 6 * U) {
-      w.arrived = true;
-      this.reachedRouteEnd();
+    if (w.track && !w.arrived && o.s >= w.length - U) {
+      const end = routePoint(this, w.length);
+      if (Math.hypot(end.x - o.x, end.y - o.y) < 6 * U) {
+        w.arrived = true;
+        this.reachedRouteEnd();
+      }
     }
     o.speed = dt > 0 ? moved / dt : 0;
     o.vx = o.speed * (o.dir ?? 1);
@@ -405,6 +447,23 @@ export const mapSpace = {
     t.y = Math.min(t.landY, t.y + t.vy * dt);
   },
 };
+
+// What kind of place you're in, from the blocks around you: for finds and critters.
+function blockBiome(blocks, x, y) {
+  const n = {};
+  for (let dy = -12; dy <= 12; dy += 3) {
+    for (let dx = -12; dx <= 12; dx += 3) {
+      const id = blocks.get(Math.floor(x + dx), Math.floor(y + dy));
+      n[id] = (n[id] ?? 0) + 1;
+    }
+  }
+  if ((n[B.WATER] ?? 0) > 3) return 'water';
+  if ((n[B.SAND] ?? 0) > 8) return 'beach';
+  if ((n[B.FOREST] ?? 0) > 10) return 'woods';
+  if ((n[B.BUILDING] ?? 0) > 12) return (n[B.PAVING] ?? 0) > 6 ? 'town' : 'street';
+  if ((n[B.GRASS] ?? 0) + (n[B.PITCH] ?? 0) > 45) return 'park';
+  return 'street';
+}
 
 // Pressing on the pet: anywhere on its body or head, with a little room to spare.
 function petHit(w, x, y) {

@@ -1,13 +1,11 @@
-// The route planner: a real map where the owner searches for a place, clicks
-// out a route, and the app fetches what lies along it from OpenStreetMap to
-// build a walk. Clicks are joined along real streets and footpaths, not in
-// straight lines through houses. Map tiles come from openstreetmap.org, place
-// search from Nominatim, walking routes from the FOSSGIS routing server and
-// map data from the Overpass API, so this needs the app to be on a site that
-// can reach them (not every preview can).
+// The map where you pick a real place to walk: search for it or click it, and
+// your walk starts at the pin, with the map loading around you as you go
+// (explore.js). Map pictures come from openstreetmap.org, place search from
+// Nominatim and map data from the Overpass API, so this needs the app to be on
+// a site that can reach them (not every preview can). Routes saved before
+// walks started from a pin are still walked, and drawn in the places list.
 
-import { overpassQuery, buildWalk, describeWalk, routeLength, bbox, BIOMES } from './route.js';
-import { pathsQuery, pathGraph, findPath, loopPoints } from './paths.js';
+import { overpassQuery, buildWalk, routeLength } from './route.js';
 
 const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const SEARCH = 'https://nominatim.openstreetmap.org/search';
@@ -17,8 +15,6 @@ const OVERPASS = [
   'https://overpass.private.coffee/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
 ];
-const ROUTER = 'https://routing.openstreetmap.de/routed-foot/route/v1/driving';
-const MAX_METRES = 5000;
 
 // fetch, giving up after `ms` milliseconds.
 async function fetchWithin(url, options, ms) {
@@ -32,7 +28,7 @@ async function fetchWithin(url, options, ms) {
 }
 
 // Asks the Overpass servers in turn until one answers.
-async function overpass(query, ms = 60000) {
+export async function overpass(query, ms = 60000) {
   let busy = false;
   for (const url of OVERPASS) {
     try {
@@ -54,68 +50,10 @@ async function overpass(query, ms = 60000) {
     : 'The map data servers didn’t answer. Check your connection and try again.');
 }
 
-// Walkable paths around some points, fetched once per area and kept, one
-// area at a time so the servers aren't asked for the same place twice.
-const graphs = [];
-let graphQueue = Promise.resolve();
-function pathsAround(points) {
-  const covers = (g) => points.every(([lat, lon]) => lat > g.inner[0] && lat < g.inner[2] && lon > g.inner[1] && lon < g.inner[3]);
-  const next = graphQueue.then(async () => {
-    const known = graphs.find(covers);
-    if (known) return known.graph;
-    const graph = pathGraph(await overpass(pathsQuery(points, 600), 25000));
-    graphs.push({ inner: bbox(points, 400), graph });
-    return graph;
-  });
-  graphQueue = next.catch(() => {});
-  return next;
-}
-
-// A walking route through some [lat, lon] points, as [lat, lon] points along
-// real streets and paths. Asks the routing server, then falls back to
-// finding paths in map data; null if neither works.
-async function walkingRoute(points) {
-  try {
-    // Points are separated by ";", sent encoded because some networks refuse it in a path.
-    const coords = points.map(([lat, lon]) => `${lon.toFixed(6)},${lat.toFixed(6)}`).join('%3B');
-    const res = await fetchWithin(`${ROUTER}/${coords}?overview=full&geometries=geojson`, {}, 8000);
-    if (res.ok) {
-      const data = await res.json();
-      const line = data.routes?.[0]?.geometry?.coordinates;
-      if (data.code === 'Ok' && line?.length >= 2) return line.map(([lon, lat]) => [lat, lon]);
-    }
-  } catch { /* try the map data instead */ }
-  try {
-    const graph = await pathsAround(points);
-    const out = [];
-    for (let i = 1; i < points.length; i++) {
-      const leg = findPath(graph, points[i - 1], points[i]);
-      if (!leg) return null;
-      out.push(...(out.length ? leg.slice(1) : leg));
-    }
-    return out.length >= 2 ? out : null;
-  } catch {
-    return null;
-  }
-}
-
-// Joins legs end to end, dropping the point where each meets the next.
-function joinLegs(legs) {
-  const out = [];
-  for (const leg of legs) {
-    for (const p of leg) {
-      const last = out[out.length - 1];
-      if (!last || last[0] !== p[0] || last[1] !== p[1]) out.push(p);
-    }
-  }
-  return out;
-}
-
 export const BIOME_COLOURS = {
   park: '#6fae57', woods: '#3f6b3a', water: '#4f8fd0', beach: '#e2c27a', street: '#9a8f86', town: '#c4673a',
 };
 
-const fmt = (m) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`);
 
 // Builds a route saved earlier again, with the map around it as it is now.
 export async function rebuildRoute(route) {
@@ -129,16 +67,12 @@ export function withoutMap(route) {
   return { ...route, line: bare.line, map: bare.map, landmarks: route.landmarks.filter((l) => l.x !== undefined) };
 }
 
-export class RoutePlanner {
-  constructor(els, { onSave, toast }) {
+export class MapPlanner {
+  constructor(els, { onStart, toast }) {
     this.els = els;
-    this.onSave = onSave;
+    this.onStart = onStart;
     this.toast = toast;
-    // The points clicked. Each has the way from the one before it: a path
-    // along streets once found, or null for a straight line.
-    this.pins = [];
-    this.loading = false;
-    this.walk = null;
+    this.at = null; // the pinned spot, [lat, lon]
     this.placeName = '';
     this.bind();
   }
@@ -147,11 +81,7 @@ export class RoutePlanner {
     const e = this.els;
     e.search.addEventListener('submit', (ev) => { ev.preventDefault(); this.search(e.query.value.trim()); });
     e.locate.addEventListener('click', () => this.locate());
-    e.undo.addEventListener('click', () => { this.pins.pop(); this.changed(); });
-    e.clear.addEventListener('click', () => { this.pins = []; this.notice(''); this.changed(); });
-    e.loop.addEventListener('click', () => this.suggestLoop());
-    e.build.addEventListener('click', () => this.build());
-    e.save.addEventListener('click', () => this.save());
+    e.save.addEventListener('click', () => this.start());
   }
 
   async open() {
@@ -173,103 +103,40 @@ export class RoutePlanner {
       .on('tileerror', () => {
         failed++;
         if (failed === 4 && loaded === 0) {
-          this.notice('Map pictures can’t load here. This page blocks outside sites; open the app from its own website to plan routes on the map.');
+          this.notice('Map pictures can’t load here. This page blocks outside sites; open the app from its own website to walk on the map.');
         }
       })
       .addTo(this.map);
-    this.map.attributionControl.addAttribution('Walking routes: <a href="https://routing.openstreetmap.de/about.html" target="_blank" rel="noopener">FOSSGIS</a>');
-    this.line = L.polyline([], { color: '#1d6d64', weight: 5, opacity: 0.85 }).addTo(this.map);
-    this.rough = L.polyline([], { color: '#1d6d64', weight: 4, opacity: 0.6, dashArray: '6 9' }).addTo(this.map);
-    this.dots = L.layerGroup().addTo(this.map);
-    this.map.on('click', (ev) => this.addPoint([ev.latlng.lat, ev.latlng.lng]));
+    this.map.on('click', (ev) => this.pin([ev.latlng.lat, ev.latlng.lng]));
     this.changed();
     this.locate(true);
   }
 
   close() { this.els.panel.hidden = true; }
 
-  // The points clicked, and the whole route so far, as [lat, lon] points.
-  get waypoints() { return this.pins.map((p) => p.at); }
-
-  legs() { return this.pins.slice(1).map((p, i) => p.path ?? [this.pins[i].at, p.at]); }
-
-  get points() { return this.pins.length > 1 ? joinLegs(this.legs()) : this.waypoints; }
-
-  // A click adds a point straight away; the way there along streets and
-  // paths is filled in when it's found, so you can keep clicking.
-  addPoint(at) {
-    const prev = this.pins[this.pins.length - 1];
-    const pin = { at, path: null, pending: false };
-    this.pins.push(pin);
-    if (prev && this.els.snap.checked) {
-      pin.pending = true;
-      walkingRoute([prev.at, at]).then((path) => {
-        if (!this.pins.includes(pin)) return; // undone or cleared meanwhile
-        pin.pending = false;
-        pin.path = path;
-        if (!path) this.notice('Couldn’t find a walkable path for part of your route, so that part is a straight line (dashed).');
-        this.changed();
-      });
-    }
-    this.changed();
-  }
-
-  // A round walk of about the chosen length from the first point (or the
-  // middle of the map), along real streets and paths. Press again for another.
-  async suggestLoop() {
-    if (this.loading || !this.map) return;
-    const c = this.map.getCenter();
-    const start = this.pins[0]?.at ?? [c.lat, c.lng];
-    const metres = Number(this.els.loopLength.value);
-    this.loading = true;
-    this.changed();
-    const path = await walkingRoute(loopPoints(start, metres));
-    this.loading = false;
-    if (!path) {
-      this.changed();
-      this.notice('Couldn’t find a loop here. Try somewhere else, or click out your own route.');
-      return;
-    }
-    this.notice('');
-    this.pins = [{ at: path[0], path: null }, { at: path[path.length - 1], path }];
-    this.changed();
-    this.map.fitBounds(this.line.getBounds(), { padding: [20, 20] });
-  }
-
   notice(text) {
     this.els.notice.textContent = text;
     this.els.notice.hidden = !text;
   }
 
-  changed() {
-    this.walk = null;
-    this.els.result.hidden = true;
+  // Drop the pin where your walk starts.
+  pin(at, name = '') {
+    this.at = at;
+    if (name) this.placeName = name;
     const L = this.L;
-    const points = this.points;
-    const waiting = this.pins.filter((p) => p.pending).length;
     if (L) {
-      // Legs that follow streets are solid; straight ones (not found yet, or not found at all) are dashed.
-      const legs = this.legs();
-      this.line.setLatLngs(legs.filter((_, i) => this.pins[i + 1].path));
-      this.rough.setLatLngs(legs.filter((_, i) => !this.pins[i + 1].path));
-      this.dots.clearLayers();
-      this.pins.forEach((p, i) => {
-        const end = i === this.pins.length - 1 && i > 0;
-        L.circleMarker(p.at, { radius: i === 0 || end ? 7 : 5, color: '#fff', weight: 2, fillColor: i === 0 ? '#1d6d64' : end ? '#1f2a24' : '#5cc4b4', fillOpacity: 1 }).addTo(this.dots);
-      });
+      this.marker?.remove();
+      this.marker = L.circleMarker(at, { radius: 9, color: '#fff', weight: 3, fillColor: '#1d6d64', fillOpacity: 1 }).addTo(this.map);
     }
-    const len = points.length > 1 ? routeLength(points) : 0;
-    let text = this.pins.length === 0
-      ? 'Click where your walk starts, then each place you want to go. The route follows real streets and paths.'
-      : this.pins.length === 1 ? 'Now click the next place you want to go.' : `Your route: ${fmt(len)}`;
-    if (waiting) text += ' · finding paths…';
-    if (this.loading) text = 'Looking for a loop…';
-    if (len > MAX_METRES) text += ` (keep it under ${fmt(MAX_METRES)})`;
-    this.els.distance.textContent = text;
-    this.els.undo.disabled = this.pins.length === 0;
-    this.els.clear.disabled = this.pins.length === 0;
-    this.els.loop.disabled = this.loading;
-    this.els.build.disabled = points.length < 2 || len > MAX_METRES || waiting > 0 || this.loading;
+    this.els.name.value = this.placeName || 'My spot';
+    this.changed();
+  }
+
+  changed() {
+    this.els.distance.textContent = this.at
+      ? 'Your walk starts at the pin. Click somewhere else to move it.'
+      : 'Click the map where you want to start walking.';
+    this.els.start.hidden = !this.at;
   }
 
   async search(q) {
@@ -289,9 +156,9 @@ export class RoutePlanner {
         b.className = 'ghost small';
         b.textContent = r.display_name;
         b.onclick = () => {
-          const [s, n, w, e] = r.boundingbox.map(Number);
-          this.map?.fitBounds([[s, w], [n, e]], { maxZoom: 17 });
-          this.placeName = r.name || r.display_name.split(',')[0];
+          const [s0, n, w, e] = r.boundingbox.map(Number);
+          this.map?.fitBounds([[s0, w], [n, e]], { maxZoom: 17 });
+          this.pin([Number(r.lat), Number(r.lon)], r.name || r.display_name.split(',')[0]);
           list.replaceChildren();
         };
         li.append(b);
@@ -305,50 +172,20 @@ export class RoutePlanner {
   locate(quiet = false) {
     if (!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
-      (pos) => this.map?.setView([pos.coords.latitude, pos.coords.longitude], 16),
+      (pos) => {
+        const at = [pos.coords.latitude, pos.coords.longitude];
+        this.map?.setView(at, 17);
+        if (!quiet) this.pin(at, 'Near me');
+      },
       () => { if (!quiet) this.notice('Your location isn’t available here. Search for a place instead.'); },
       { timeout: 8000 },
     );
   }
 
-  async build() {
-    const e = this.els;
-    e.build.disabled = true;
-    e.build.textContent = 'Looking at what’s along your route…';
-    this.notice('');
-    try {
-      const points = this.points;
-      this.walk = buildWalk(points, await overpass(overpassQuery(points)), { waypoints: this.waypoints });
-      this.showResult();
-    } catch (err) {
-      this.notice(err.message?.startsWith('The map') ? err.message : `Something went wrong building the walk (${err.message}).`);
-    } finally {
-      e.build.textContent = 'Build this walk';
-      e.build.disabled = false;
-    }
-  }
-
-  showResult() {
-    const e = this.els;
-    const w = this.walk;
-    e.summary.textContent = describeWalk(w);
-    e.strip.replaceChildren(...w.segments.map((s) => {
-      const span = document.createElement('span');
-      span.style.flexGrow = String(Math.max(1, s.to - s.from));
-      span.style.background = BIOME_COLOURS[s.biome];
-      span.title = `${BIOMES[s.biome].label}: ${fmt(s.to - s.from)}`;
-      return span;
-    }));
-    e.name.value = this.placeName ? `${this.placeName} walk` : 'My route';
-    e.result.hidden = false;
-  }
-
-  save() {
-    if (!this.walk) return;
-    const name = this.els.name.value.trim() || 'My route';
-    this.onSave({ name, route: this.walk });
-    this.pins = [];
-    this.changed();
+  start() {
+    if (!this.at) return;
+    const name = this.els.name.value.trim() || 'My spot';
+    this.onStart({ name, at: this.at });
     this.close();
   }
 }
