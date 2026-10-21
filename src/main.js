@@ -21,7 +21,7 @@ import { MediaStore, photoToBlob, blobToImage } from './media-store.js';
 import { RoutePlanner, routeThumbnail, rebuildRoute, withoutMap } from './map-planner.js';
 
 // Shown under the route planner, so it's easy to tell which version a browser is running.
-const VERSION = '2026-10-21a';
+const VERSION = '2026-10-21b';
 const SAVE_KEY = 'ai-pet/v1';
 const PREFS_KEY = 'ai-pet/prefs';
 const speed = Number(new URLSearchParams(location.search).get('speed')) || 1;
@@ -380,7 +380,8 @@ scene.addEventListener('pointerdown', (e) => {
     return;
   } else if (world.scene === 'park') {
     pointer.mode = 'walk';
-    world.setWalkInput(world.walkDirToward(p));
+    // On a map, you walk to where you press; side-on, toward that side.
+    if (onMap()) world.walkToward(p); else world.setWalkInput(world.walkDirToward(p));
   } else if (hit === 'floor') {
     pointer.mode = null;
     world.walkOwnerTo(p.x);
@@ -393,7 +394,7 @@ scene.addEventListener('pointermove', (e) => {
   const p = toWorld(scene, e, world);
   if (pointer.mode === 'drag') { trackVelocity(p); world.dragTo(p.x, p.y); }
   else if (pointer.mode === 'pet') world.strokeTo(p.x, p.y);
-  else if (pointer.mode === 'walk') world.setWalkInput(world.walkDirToward(p));
+  else if (pointer.mode === 'walk') { if (onMap()) world.walkToward(p); else world.setWalkInput(world.walkDirToward(p)); }
   else scene.style.cursor = p.onPet ? 'grab' : CURSORS[world.hitTest(p.x, p.y)] ?? 'default';
 });
 
@@ -403,7 +404,7 @@ function endPointer() {
     const v = releaseVelocity();
     world.release(v.vx, v.vy);
   } else if (pointer.mode === 'pet') world.stopPetting();
-  else if (pointer.mode === 'walk') world.setWalkInput(0);
+  else if (pointer.mode === 'walk' && !onMap()) world.setWalkInput(0);
   pointer.mode = null;
   scene.classList.remove('grabbing');
 }
@@ -562,9 +563,9 @@ document.addEventListener('keydown', (e) => {
   renderPanel();
 });
 document.addEventListener('keyup', (e) => {
-  held.delete(e.key.toLowerCase());
-  if (world && held.size === 0) world.setWalkInput(0);
-  else if (world?.scene === 'park') walkByKeys();
+  const k = e.key.toLowerCase();
+  if (!held.delete(k) || !world) return;
+  if (world.scene === 'park') walkByKeys();
 });
 
 // Arrow keys walk the way they point: along the route on a map, left or right side-on.
@@ -573,9 +574,9 @@ function walkByKeys() {
   let x = 0;
   let y = 0;
   for (const k of held) { if (WALK_KEYS[k]) { x += WALK_KEYS[k][0]; y += WALK_KEYS[k][1]; } }
-  if (!x && !y) { world.setWalkInput(0); return; }
-  const o = world.owner;
-  world.setWalkInput(world.walkDirToward({ x: o.x + x * 100, y: (o.y ?? 0) + y * 100 }));
+  // On a map you walk where the keys point, anywhere; side-on, left or right.
+  if (onMap()) { world.steer(x, y); return; }
+  world.setWalkInput(Math.sign(x));
 }
 
 $('talk').addEventListener('submit', (e) => {
@@ -908,7 +909,7 @@ function escapeHtml(s) {
 
 function contextHint() {
   const w = world;
-  if (onMap(w)) return 'Hold Walk on, the arrow keys, or press the map ahead of you to follow your route. Scroll to zoom. Press and hold your pet to give them a fuss.';
+  if (onMap(w)) return 'Hold Walk on to follow your route, or walk anywhere with the arrow keys or by pressing where you want to go. Scroll to zoom. Press and hold your pet to give them a fuss.';
   if (w.scene === 'park') return 'Hold on either side of you, or the arrow keys, to walk. Press and hold your pet to give them a fuss.';
   if (w.drag?.item === 'scoop') return 'Hold the scoop over the bowl to pour. Let go when it looks like enough.';
   if (w.drag?.item === 'treat') return 'Hold the treat up high to lure a sit, or down on the floor to lure lying down. Let go at their mouth to hand it over.';

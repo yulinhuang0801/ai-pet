@@ -94,7 +94,7 @@ function painted(line) {
 }
 
 // Which sides of a road get a pavement. Untagged roads get one each side,
-// unless the map draws its pavements as separate lines (then those are used).
+// unless the map draws this road's pavements as separate lines alongside it.
 function pavementSides(line, separate) {
   if (line.k !== 'major' && line.k !== 'minor') return [];
   const sw = line.sw;
@@ -102,7 +102,27 @@ function pavementSides(line, separate) {
   if (sw === 'both' || sw === 'yes') return [-1, 1];
   if (sw === 'left') return [-1];
   if (sw === 'right') return [1];
-  return separate ? [] : [-1, 1];
+  return separate(line) ? [] : [-1, 1];
+}
+
+// Whether a road has pavements drawn as their own lines running beside it.
+function separatePavements(sidewalks) {
+  const near = new Set();
+  for (const l of sidewalks) alongLine(l.p, 3, 0, (x, y) => near.add(`${Math.floor(x / 4)},${Math.floor(y / 4)}`));
+  return (road) => {
+    const reach = wayWidth(road) / 2 + 5;
+    let hits = 0;
+    let total = 0;
+    alongLine(road.p, 8, 4, (x, y, tx, ty) => {
+      total++;
+      for (const side of [-1, 1]) {
+        let found = false;
+        for (let d = 2; d <= reach && !found; d += 2) found = near.has(`${Math.floor((x - ty * d * side) / 4)},${Math.floor((y + tx * d * side) / 4)}`);
+        if (found) { hits++; break; }
+      }
+    });
+    return total > 0 && hits / total > 0.4;
+  };
 }
 
 // --- the grid ---
@@ -245,7 +265,7 @@ export function buildBlocks(map, line, { reach = 90 } = {}) {
   for (const l of map.lines) {
     if (l.k === 'river' || l.k === 'stream') strokeLine(l.p, (l.w ?? (l.k === 'river' ? 9 : 2)) / 2, (i, j) => grid.set(i, j, B.WATER));
   }
-  const separate = map.lines.some((l) => l.k === 'sidewalk');
+  const separate = separatePavements(map.lines.filter((l) => l.k === 'sidewalk'));
   const ways = map.lines.filter((l) => ['path', 'sidewalk', 'crossing', 'service', 'minor', 'major'].includes(l.k));
   const order = { path: 0, sidewalk: 1, service: 2, minor: 3, major: 4, crossing: 5 };
   ways.sort((p, q) => order[p.k] - order[q.k]);

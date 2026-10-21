@@ -565,47 +565,114 @@ const ROOF_COLOURS = [[186, 104, 84], [160, 88, 72], [128, 132, 142], [176, 120,
 const LEAVES = [[64, 128, 56], [78, 146, 64], [56, 112, 50]];
 
 // The blocks for a route, built once and kept.
-function blocksFor(m, route) {
-  m.blocks ??= buildBlocks(route.map, route.line);
+function blocksFor(m, route, built) {
+  m.blocks ??= built ?? buildBlocks(route.map, route.line);
   m.chunkImages ??= new Map();
   return m.blocks;
 }
 
-// One picture per chunk, a pixel per block, with a little variety so it reads like a
-// block world rather than flat paint.
+// Each block is an 8 by 8 pixel picture, drawn by rules: grass has blades,
+// asphalt has grit, pavements are slabs, roofs have rows of tiles. Every
+// pixel varies a little, so no two blocks look quite the same.
+const PX = 8;
+const KEEP_CHUNKS = 80;
+
+const pick = (n) => hash(n);
+function mix(rgb, k) { return [rgb[0] * k, rgb[1] * k, rgb[2] * k]; }
+
+function texel(id, x, y, i, j, r, base) {
+  const edge = x === 0 || y === 0;
+  switch (id) {
+    case B.GRASS: case B.FOREST: case B.CEMETERY:
+      if (id === B.FOREST && r > 0.86) return [120, 96, 60];
+      if (id === B.CEMETERY && (i * 3 + j) % 11 === 0 && x > 2 && x < 6 && y > 1 && y < 6) return [170, 170, 165];
+      return mix(base, r < 0.22 ? 0.84 : r > 0.92 ? 1.14 : 1);
+    case B.PITCH: return mix(base, (j % 4 < 2 ? 1.06 : 0.94) * (r < 0.2 ? 0.92 : 1));
+    case B.FLOWERS:
+      if (r > 0.8) return [[236, 120, 170], [246, 210, 80], [250, 250, 245]][Math.floor(pick(r * 1000) * 3)];
+      return mix(BLOCK_COLOURS[B.GRASS], r < 0.3 ? 0.85 : 1);
+    case B.PAVEMENT: return mix(base, edge ? 0.86 : r < 0.15 ? 0.95 : 1);
+    case B.KERB: return mix(base, y === PX - 1 ? 0.8 : 1.05);
+    case B.PAVING: {
+      const row = Math.floor(y / 4);
+      const mortar = y % 4 === 0 || (x + (row % 2) * 4 + (j % 2) * 2) % PX === 0;
+      return mix(base, mortar ? 0.8 : 0.96 + r * 0.08);
+    }
+    case B.ASPHALT: case B.PARKING: case B.CYCLEWAY:
+      return mix(base, r < 0.18 ? 0.86 : r > 0.94 ? 1.18 : 1);
+    case B.LINE: case B.LINE_YELLOW: case B.ZEBRA: return mix(base, r < 0.12 ? 0.9 : 1);
+    case B.WATER: return mix(base, (y + Math.floor(i * 3 + j * 5)) % 4 === 0 && (x + y) % 6 < 3 ? 1.18 : r < 0.2 ? 0.93 : 1);
+    case B.DIRT: case B.SAND: case B.PLAYGROUND: return mix(base, r < 0.2 ? 0.85 : r > 0.9 ? 1.12 : 1);
+    case B.GRAVEL: return mix(base, [0.8, 0.95, 1.1, 1.22][Math.floor(r * 4)]);
+    case B.FARMLAND: return mix(base, y % 3 === 0 ? 0.78 : r < 0.2 ? 0.9 : 1);
+    case B.RAIL: return y % 3 === 0 ? [112, 82, 56] : x === 2 || x === 5 ? [150, 150, 158] : mix(BLOCK_COLOURS[B.GRAVEL], 0.85 + r * 0.3);
+    case B.WOOD: case B.FENCE: return mix(base, x % 4 === 0 ? 0.78 : 0.95 + r * 0.1);
+    case B.HEDGE: return mix(base, r < 0.3 ? 0.8 : r > 0.85 ? 1.2 : 1);
+    default: return mix(base, r < 0.2 ? 0.9 : 1);
+  }
+}
+
+// One picture per chunk, built when first seen and kept while it's useful.
 function chunkImage(m, c) {
   const key = `${c.ci},${c.cj}`;
   let canvas = m.chunkImages.get(key);
-  if (canvas) return canvas;
+  if (canvas) {
+    // Most recently used last.
+    m.chunkImages.delete(key);
+    m.chunkImages.set(key, canvas);
+    return canvas;
+  }
   canvas = document.createElement('canvas');
-  canvas.width = CHUNK;
-  canvas.height = CHUNK;
+  canvas.width = CHUNK * PX;
+  canvas.height = CHUNK * PX;
   const g = canvas.getContext('2d');
-  const img = g.createImageData(CHUNK, CHUNK);
+  const W = CHUNK * PX;
+  const img = g.createImageData(W, W);
   const blocks = m.blocks;
+  const grid = blocks.grid;
   const i0 = c.ci * CHUNK;
   const j0 = c.cj * CHUNK;
+  const houseAt = (i, j) => {
+    const nb = grid.chunkAt(i, j);
+    if (!nb) return 0;
+    const n = (j - nb.cj * CHUNK) * CHUNK + (i - nb.ci * CHUNK);
+    return nb.block[n] === B.BUILDING ? nb.house[n] : 0;
+  };
+  const put = (i, j, x, y, rgb) => img.data.set([rgb[0], rgb[1], rgb[2], 255], (((j - j0) * PX + y) * W + (i - i0) * PX + x) * 4);
   for (let n = 0; n < CHUNK * CHUNK; n++) {
     const i = i0 + (n % CHUNK);
     const j = j0 + Math.floor(n / CHUNK);
     const id = c.block[n];
-    let rgb;
-    let k = 1 + (hash(i * 7919 + j * 104729) - 0.5) * 0.12;
     if (id === B.BUILDING) {
-      const house = c.house[n] - 1;
-      rgb = ROOF_COLOURS[Math.floor(hash(house) * ROOF_COLOURS.length)];
-      // Roof edges and the line between neighbouring houses are darker, so each house shows.
-      const edge = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([di, dj]) => {
-        const nb = blocks.grid.chunkAt(i + di, j + dj);
-        if (!nb) return true;
-        const m2 = (j + dj - nb.cj * CHUNK) * CHUNK + (i + di - nb.ci * CHUNK);
-        return nb.block[m2] !== B.BUILDING || nb.house[m2] !== c.house[n];
-      });
-      k = edge ? 0.72 : 1 + (hash(house * 31 + (i + j)) - 0.5) * 0.05;
-    } else rgb = BLOCK_COLOURS[id] ?? [118, 176, 84];
-    img.data.set([rgb[0] * k, rgb[1] * k, rgb[2] * k, 255], n * 4);
+      const house = c.house[n];
+      const roof = ROOF_COLOURS[Math.floor(hash(house - 1) * ROOF_COLOURS.length)];
+      // Outline where this house meets anything else; the south edge is darker, like a wall in shade.
+      const n0 = houseAt(i, j - 1) !== house;
+      const s0 = houseAt(i, j + 1) !== house;
+      const w0 = houseAt(i - 1, j) !== house;
+      const e0 = houseAt(i + 1, j) !== house;
+      for (let y = 0; y < PX; y++) {
+        for (let x = 0; x < PX; x++) {
+          const r = hash((i * 8 + x) * 7919 + (j * 8 + y) * 104729);
+          let k = (y + (j % 2) * 4) % 4 === 0 ? 0.86 : 0.97 + r * 0.06; // rows of tiles
+          if ((n0 && y === 0) || (w0 && x === 0) || (e0 && x === PX - 1)) k = 0.66;
+          if (s0 && y >= PX - 2) k = 0.55;
+          put(i, j, x, y, mix(roof, k));
+        }
+      }
+      continue;
+    }
+    const base = BLOCK_COLOURS[id] ?? BLOCK_COLOURS[B.GRASS];
+    // Buildings cast a short shadow onto the ground to their south.
+    const shade = houseAt(i, j - 1) ? 0.72 : houseAt(i - 1, j - 1) ? 0.85 : 1;
+    for (let y = 0; y < PX; y++) {
+      for (let x = 0; x < PX; x++) {
+        const r = hash((i * 8 + x) * 7919 + (j * 8 + y) * 104729);
+        put(i, j, x, y, mix(texel(id, x, y, i, j, r, base), shade));
+      }
+    }
   }
-  // Tree tops, as clumps of leaf blocks.
+  // Tree tops, as blocky clumps of leaves.
   for (const t of blocks.trees) {
     if (t.x + t.r < i0 || t.x - t.r > i0 + CHUNK || t.y + t.r < j0 || t.y - t.r > j0 + CHUNK) continue;
     for (let j = Math.floor(t.y - t.r); j <= Math.ceil(t.y + t.r); j++) {
@@ -613,19 +680,27 @@ function chunkImage(m, c) {
         if (i < i0 || i >= i0 + CHUNK || j < j0 || j >= j0 + CHUNK) continue;
         const d = Math.hypot(i + 0.5 - t.x, j + 0.5 - t.y);
         if (d > t.r) continue;
-        const leaf = LEAVES[Math.floor(hash(i * 13 + j * 7) * LEAVES.length)];
-        const k = d > t.r - 0.8 ? 0.8 : 1.05 - (d / t.r) * 0.15;
-        img.data.set([leaf[0] * k, leaf[1] * k, leaf[2] * k, 255], ((j - j0) * CHUNK + (i - i0)) * 4);
+        const rim = d > t.r - 0.9;
+        for (let y = 0; y < PX; y++) {
+          for (let x = 0; x < PX; x++) {
+            const r = hash((i * 8 + x) * 7919 + (j * 8 + y) * 104729 + 17);
+            const leaf = LEAVES[Math.floor(r * LEAVES.length)];
+            // Lit from the top left.
+            const light = (i + x / PX - t.x) + (j + y / PX - t.y) < -t.r * 0.4 ? 1.15 : 1;
+            put(i, j, x, y, mix(leaf, (rim ? 0.8 : 1) * light * (r > 0.9 ? 1.2 : 1)));
+          }
+        }
       }
     }
   }
   g.putImageData(img, 0, 0);
   m.chunkImages.set(key, canvas);
+  if (m.chunkImages.size > KEEP_CHUNKS) m.chunkImages.delete(m.chunkImages.keys().next().value);
   return canvas;
 }
 
-function drawBlocks(ctx, m, route, cam) {
-  const blocks = blocksFor(m, route);
+function drawBlocks(ctx, m, route, cam, built) {
+  const blocks = blocksFor(m, route, built);
   ctx.fillStyle = '#c9cebf';
   ctx.fillRect(cam.x, cam.y, VIEW_W / zoom, VIEW_H / zoom);
   const size = CHUNK * U;
@@ -672,7 +747,7 @@ export function drawMapWalk(ctx, world, { date = new Date(), time = world.time, 
   const photo = Boolean(imagery);
   const blocky = !photo && blockLook;
   if (photo) drawImagery(ctx, m, cam, () => drawGround(ctx, m, visible, lines));
-  else if (blocky) drawBlocks(ctx, m, route, cam);
+  else if (blocky) drawBlocks(ctx, m, route, cam, world.walk.blocks);
   else drawGround(ctx, m, visible, lines);
   // The photo or the blocks already show buildings and trees.
   const flat = photo || blocky;

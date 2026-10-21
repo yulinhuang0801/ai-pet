@@ -1,7 +1,9 @@
-// The map space: a walk along a real route, seen from above. The owner walks
-// the route's actual streets and paths, turning its corners; the pet moves
-// freely around them on the leash, sniffing at the verge, checking out real
-// landmarks and chasing squirrels across the grass.
+// The map space: a walk along a real route, seen from above, on the route's
+// block grid (blocks.js). You can follow the route (Walk on / Walk back) or
+// walk anywhere you like; houses, fences, hedges and water are in the way
+// for you and your pet alike. Your pet moves freely around you on the leash,
+// sniffing at the verge, checking out real landmarks and chasing squirrels
+// across the grass.
 //
 // It answers the same questions as the side-on room (see world.js,
 // SPACE_CONTRACT), so the pet's behaviour doesn't change. Positions are
@@ -17,6 +19,7 @@ import { sideSpace, GROUND, LEASH } from './space-side.js';
 import { measureLine, pointAlong, distanceAlong } from './route-map.js';
 import { biomeAt } from './route.js';
 import { pickFind } from './finds.js';
+import { buildBlocks, walkable, B } from './blocks.js';
 
 export const MAP_UNITS_PER_METER = 64;
 const U = MAP_UNITS_PER_METER;
@@ -34,11 +37,33 @@ function routePoint(w, s) {
   return { x: p.x * U, y: p.y * U, tx: p.tx, ty: p.ty };
 }
 
-// How far along the route the pet is, looking near the owner.
-function petAlong(w) {
-  const s = w.owner.s / U;
-  return distanceAlong(w.walk.track, w.body.x / U, w.body.y / U, s - 15, s + 15) * U;
+// --- Walls ---
+
+// Roughly how much room you and your pet take up, in metres from the middle.
+const OWNER_RADIUS = 0.35;
+const PET_RADIUS = 0.3;
+
+// Is a spot (in map units) in or against something solid?
+function blocked(w, x, y, r) {
+  const blocks = w.walk.blocks;
+  if (!blocks) return false;
+  const m = r * U;
+  for (const [dx, dy] of [[0, 0], [m, 0], [-m, 0], [0, m], [0, -m]]) {
+    if (!walkable(blocks, (x + dx) / U, (y + dy) / U)) return true;
+  }
+  return false;
 }
+
+// Move something by (dx, dy), sliding along walls instead of going through.
+// Anything already stuck inside a wall may move freely, to get out.
+function slide(w, thing, dx, dy, r) {
+  if (blocked(w, thing.x, thing.y, r)) { thing.x += dx; thing.y += dy; return; }
+  if (!blocked(w, thing.x + dx, thing.y, r)) thing.x += dx;
+  if (!blocked(w, thing.x, thing.y + dy, r)) thing.y += dy;
+}
+
+// The way you're facing, as a unit vector.
+const facing = (o) => ({ x: Math.cos(o.heading), y: Math.sin(o.heading) });
 
 // You and your pet are seen from above here, facing along a heading (an
 // angle). The pet's length from nose to rump, in metres, as it's drawn.
@@ -59,11 +84,12 @@ export const mapSpace = {
     const w = this.walk;
     w.track = measureLine(w.route.line);
     w.length = w.track.length * U;
+    w.blocks = buildBlocks(w.route.map, w.route.line);
     w.side = 1; // which side of the path the pet trots on
     const start = routePoint(this, 0);
     const heading = Math.atan2(start.ty, start.tx);
     Object.assign(this.owner, {
-      x: start.x, y: start.y, s: 0, dir: start.tx >= 0 ? 1 : -1, heading, vx: 0, targetX: null, walkInput: 0, hand: null,
+      x: start.x, y: start.y, s: 0, dir: start.tx >= 0 ? 1 : -1, heading, vx: 0, targetX: null, walkInput: 0, hand: null, steer: null, goal: null,
     });
     const ahead = routePoint(this, 110);
     Object.assign(this.body, { x: ahead.x, y: ahead.y, vx: 0, vy: 0, dir: ahead.x >= start.x ? 1 : -1, heading });
@@ -122,14 +148,25 @@ export const mapSpace = {
     return { x: o.x + side * 85 * this.scale, y: o.y + 12 };
   },
 
-  // Ahead of the owner along the route (1) or behind (-1).
-  sideOfOwner() { return petAlong(this) >= this.owner.s ? 1 : -1; },
+  // In front of you (1) or behind (-1).
+  sideOfOwner() {
+    const o = this.owner;
+    const f = facing(o);
+    return (this.body.x - o.x) * f.x + (this.body.y - o.y) * f.y >= 0 ? 1 : -1;
+  },
 
-  // On the route a little ahead of (or behind) the owner, on the pet's side of the path.
+  // A little in front of you (or behind, when you're standing and it's behind),
+  // to one side, and never inside a wall.
   besideOwner(ahead, gap) {
-    const p = routePoint(this, this.owner.s + ahead * gap * this.scale);
+    const o = this.owner;
+    const f = facing(o);
+    const k = (o.walkInput ? 1 : ahead) * gap * this.scale;
     const off = this.walk.side * 75;
-    return { x: p.x - p.ty * off, y: p.y + p.tx * off };
+    for (const side of [off, 0]) {
+      const p = { x: o.x + f.x * k - f.y * side, y: o.y + f.y * k + f.x * side };
+      if (!blocked(this, p.x, p.y, PET_RADIUS)) return p;
+    }
+    return { x: o.x, y: o.y };
   },
 
   // --- The pet's head ---
@@ -182,31 +219,50 @@ export const mapSpace = {
 
   biomeHere() { return biomeAt(this.walk.route, this.routeMeters()); },
 
+  // A landmark the pet hasn't checked out yet, close by and not behind you.
   landmarkAhead() {
     const w = this.walk;
-    const here = this.routeMeters();
-    const lm = w.route.landmarks.find((l) => !w.visited.has(l.d) && l.d > here - 2 && l.d < here + 10);
+    const o = this.owner;
+    const f = facing(o);
+    const lm = w.route.landmarks.find((l) => {
+      if (w.visited.has(l.d) || l.x === undefined) return false;
+      const dx = l.x * U - o.x;
+      const dy = l.y * U - o.y;
+      return Math.hypot(dx, dy) < 30 * U && dx * f.x + dy * f.y > -2 * U && dx * f.x + dy * f.y < 12 * U;
+    });
     return lm ? { ...lm, x: lm.x * U, y: lm.y * U } : null;
   },
 
-  // Something to find, at the edge of the path a little way ahead.
+  // Something to find a little way ahead of you, somewhere it can lie.
   spawnFind() {
     const o = this.owner;
-    const p = routePoint(this, o.s + (o.walkInput || 1) * this.rand(7, 11) * U);
-    const off = (this.chance(0.5) ? 1 : -1) * this.rand(0.6, 1.4) * U;
-    this.walk.find = { x: p.x - p.ty * off, y: p.y + p.tx * off, item: pickFind(this.pet.species, this.rng, this.biomeHere()) };
+    const f = facing(o);
+    for (let tries = 0; tries < 8; tries++) {
+      const ahead = this.rand(6, 10) * U;
+      const side = this.rand(-2.5, 2.5) * U;
+      const p = { x: o.x + f.x * ahead - f.y * side, y: o.y + f.y * ahead + f.x * side };
+      if (blocked(this, p.x, p.y, 0.2)) continue;
+      this.walk.find = { ...p, item: pickFind(this.pet.species, this.rng, this.biomeHere()) };
+      return;
+    }
+    this.scheduleFind(20, 40);
   },
 
   scheduleFind(minMeters, maxMeters) {
     this.walk.nextFindAt = this.walk.distance + this.rand(minMeters, maxMeters) * U;
   },
 
-  // A squirrel (or a bird) off to one side ahead, which bolts away from the path.
+  // A squirrel (or a bird) off to one side ahead, which bolts away from you.
   spawnCritter(ahead) {
-    const p = routePoint(this, this.owner.s + ahead * 6 * U);
+    const o = this.owner;
+    const f = facing(o);
+    const k = (o.walkInput ? 1 : ahead) * 6 * U;
+    const p = { x: o.x + f.x * k, y: o.y + f.y * k, tx: f.x, ty: f.y };
     const side = this.chance(0.5) ? 1 : -1;
     const off = side * this.rand(3, 5) * U;
-    const leafy = ['park', 'woods'].includes(this.biomeHere());
+    const blocks = this.walk.blocks;
+    const ground = blocks?.get(Math.floor((p.x - p.ty * off) / U), Math.floor((p.y + p.tx * off) / U));
+    const leafy = ['park', 'woods'].includes(this.biomeHere()) || ground === B.GRASS || ground === B.FOREST;
     const away = { x: -p.ty * side, y: p.tx * side };
     this.walk.critter = {
       x: p.x - p.ty * off, y: p.y + p.tx * off, ax: away.x, ay: away.y, dir: Math.sign(away.x) || 1,
@@ -217,35 +273,65 @@ export const mapSpace = {
 
   // --- Simulation steps ---
 
+  // You walk along the route (Walk on / Walk back), in a direction (the arrow
+  // keys), or to a spot you pressed. Off the route, walls are in the way.
   moveOwner(dt) {
     const o = this.owner;
     const w = this.walk;
-    const resisting = w.tension > 0.8 && ['flop', 'sniff'].includes(this.activity.phase) && Math.sign(petAlong(this) - o.s) !== o.walkInput;
-    const before = o.s;
-    o.s = clamp(o.s + o.walkInput * OWNER_WALK_SPEED * (o.jog ? JOG : 1) * (resisting ? 0.45 : 1) * dt, 0, w.length);
-    const step = Math.abs(o.s - before);
-    w.distance += step;
-    this.earn('walk', step / U);
+    let dir = null;
+    let onRoute = false;
+    if (o.goal) {
+      const dx = o.goal.x - o.x;
+      const dy = o.goal.y - o.y;
+      const d = Math.hypot(dx, dy);
+      if (d < 0.4 * U) { o.goal = null; o.walkInput = 0; } else dir = { x: dx / d, y: dy / d };
+    } else if (o.steer) {
+      const d = Math.hypot(o.steer.x, o.steer.y) || 1;
+      dir = { x: o.steer.x / d, y: o.steer.y / d };
+    } else if (o.walkInput) {
+      // Head for a spot a few metres along the route, which brings you back to it if you wandered off.
+      const target = routePoint(this, clamp(o.s + o.walkInput * 3 * U, 0, w.length));
+      const dx = target.x - o.x;
+      const dy = target.y - o.y;
+      const d = Math.hypot(dx, dy);
+      if (d > 2) dir = { x: dx / d, y: dy / d };
+      onRoute = true;
+    }
+    const before = { x: o.x, y: o.y };
+    if (dir) {
+      const resisting = w.tension > 0.8 && ['flop', 'sniff'].includes(this.activity.phase) && (this.body.x - o.x) * dir.x + (this.body.y - o.y) * dir.y < 0;
+      const step = OWNER_WALK_SPEED * (o.jog ? JOG : 1) * (resisting ? 0.45 : 1) * dt;
+      // The route follows streets and paths, so walking it needs no checks for walls.
+      if (onRoute) { o.x += dir.x * step; o.y += dir.y * step; } else slide(this, o, dir.x * step, dir.y * step, OWNER_RADIUS);
+      o.heading = turnToward(o.heading, Math.atan2(dir.y, dir.x), 1 - Math.exp(-dt * 10));
+      o.dir = Math.cos(o.heading) >= 0 ? 1 : -1;
+    }
+    const moved = Math.hypot(o.x - before.x, o.y - before.y);
+    // How far along the route you are: the nearest point of it, near where you were.
+    o.s = distanceAlong(w.track, o.x / U, o.y / U, o.s / U - 25, o.s / U + 25) * U;
+    w.distance += moved;
+    this.earn('walk', moved / U);
     if (!w.find && w.distance >= w.nextFindAt) this.spawnFind();
     if (w.find && Math.hypot(w.find.x - o.x, w.find.y - o.y) > 25 * U) {
       w.find = null;
       this.scheduleFind(60, 120);
     }
-    placeOwner(this);
-    if (!w.arrived && o.s >= w.length - 1) {
+    const end = routePoint(this, w.length);
+    if (!w.arrived && o.s >= w.length - U && Math.hypot(end.x - o.x, end.y - o.y) < 6 * U) {
       w.arrived = true;
       this.reachedRouteEnd();
     }
-    o.speed = dt > 0 ? step / dt : 0;
-    o.vx = o.speed * o.walkInput;
+    o.speed = dt > 0 ? moved / dt : 0;
+    o.vx = o.speed * (o.dir ?? 1);
     o.phase += dt * o.speed / 22;
     if (o.speed > 5) o.lastMoved = this.time;
     if (o.hand && o.speed < 5) o.heading = turnToward(o.heading, Math.atan2(o.hand.y - o.y, o.hand.x - o.x), 1 - Math.exp(-dt * 6));
     // The camera follows, looking a little ahead.
-    const ahead = routePoint(this, o.s + (o.walkInput || 0) * 4 * U);
+    const f = facing(o);
+    const look = o.speed > 5 ? 4 * U : 0;
     const k = 1 - Math.exp(-dt * 2.5);
-    this.mapCam.x += ((o.x + ahead.x) / 2 - this.mapCam.x) * k;
-    this.mapCam.y += ((o.y + ahead.y) / 2 - 60 - this.mapCam.y) * k;
+    this.mapCam.x += (o.x + f.x * look / 2 - this.mapCam.x) * k;
+    this.mapCam.y += (o.y + f.y * look / 2 - 60 - this.mapCam.y) * k;
   },
 
   holdLeash(dt) {
@@ -260,16 +346,20 @@ export const mapSpace = {
       const uy = dy / dist;
       const excess = dist - limit;
       const lunging = !this.walk.offLeash && this.activity.phase === 'squirrel' && this.pet.species === 'dog';
-      if (lunging) {
-        // A lunging dog drags its owner along the path.
-        const here = routePoint(this, o.s);
-        o.s = clamp(o.s + (ux * here.tx + uy * here.ty) * excess * 0.6, 0, this.walk.length);
-        placeOwner(this);
-      }
+      // A lunging dog drags you along.
+      if (lunging) slide(this, o, ux * excess * 0.6, uy * excess * 0.6, OWNER_RADIUS);
       const ex = b.x - o.x;
       const ey = b.y - o.y;
       const d = Math.hypot(ex, ey) || 1;
-      if (d > limit) { b.x = o.x + (ex / d) * limit; b.y = o.y + (ey / d) * limit; }
+      if (d > limit) {
+        b.x = o.x + (ex / d) * limit;
+        b.y = o.y + (ey / d) * limit;
+        // Pulled against a wall: come round toward you instead.
+        for (let i = 0; i < 8 && blocked(this, b.x, b.y, PET_RADIUS); i++) {
+          b.x += (o.x - b.x) * 0.25;
+          b.y += (o.y - b.y) * 0.25;
+        }
+      }
     }
     const now = Math.hypot(b.x - o.x, b.y - o.y);
     this.walk.tension = this.walk.offLeash ? 0 : clamp((now - (LEASH - 40)) / 40, 0, 1);
@@ -287,13 +377,14 @@ export const mapSpace = {
   moveBody(dt) {
     const b = this.body;
     b.vy ??= 0;
-    b.x += b.vx * dt;
-    b.y += b.vy * dt;
-    b.speed = Math.hypot(b.vx, b.vy);
+    const before = { x: b.x, y: b.y };
+    slide(this, b, b.vx * dt, b.vy * dt, PET_RADIUS);
+    // Speed is how fast it really went, so it doesn't run on the spot against a wall.
+    b.speed = dt > 0 ? Math.hypot(b.x - before.x, b.y - before.y) / dt : 0;
     // The pet faces the way it moves; standing beside you while you walk, it
     // faces the way you're going.
     const o = this.owner;
-    const want = b.speed > 12 ? Math.atan2(b.vy, b.vx) : o.speed > 5 ? o.heading : b.heading;
+    const want = b.speed > 12 ? Math.atan2(b.y - before.y, b.x - before.x) : o.speed > 5 ? o.heading : b.heading;
     b.heading = turnToward(b.heading ?? want, want, 1 - Math.exp(-dt * 8));
     b.dir = Math.cos(b.heading) >= 0 ? 1 : -1;
     b.gait += dt * b.speed / (11 * this.scale);
@@ -314,19 +405,6 @@ export const mapSpace = {
     t.y = Math.min(t.landY, t.y + t.vy * dt);
   },
 };
-
-// Put the owner on the route at their distance along it, facing the way they walk.
-function placeOwner(w) {
-  const o = w.owner;
-  const p = routePoint(w, o.s);
-  o.x = p.x;
-  o.y = p.y;
-  if (o.walkInput) {
-    const want = Math.atan2(p.ty * o.walkInput, p.tx * o.walkInput);
-    o.heading = turnToward(o.heading ?? want, want, 0.25);
-    o.dir = Math.cos(o.heading) >= 0 ? 1 : -1;
-  }
-}
 
 // Pressing on the pet: anywhere on its body or head, with a little room to spare.
 function petHit(w, x, y) {

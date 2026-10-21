@@ -44,7 +44,7 @@ The app is built in layers so the pet itself (its needs, personality, learning a
 
 ## The space contract
 
-The behaviour never touches coordinates. It asks the space. The world holds the space it's in (`world.space`) and forwards each question to it: the side-on room normally, and the map space (`space-map.js`) on a route walk that has its map. The map space proves the idea: the same activities (trotting along, sniffing, chasing squirrels, checking out landmarks) run unchanged on a 2D ground plane. The full list is `SPACE_CONTRACT` in `world.js`, and a test fails if a space is missing any of it. In plain words:
+The behaviour never touches coordinates. It asks the space. The world holds the space it's in (`world.space`) and forwards each question to it: the side-on room normally, and the map space (`space-map.js`) on a route walk that has its map. The map space stands on the route's block grid (`blocks.js`), which says which squares are solid. The map space proves the idea: the same activities (trotting along, sniffing, chasing squirrels, checking out landmarks) run unchanged on a 2D ground plane. The full list is `SPACE_CONTRACT` in `world.js`, and a test fails if a space is missing any of it. In plain words:
 
 | Question or action | Side-on answer today | What a 3D space would do |
 | --- | --- | --- |

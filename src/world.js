@@ -1138,7 +1138,30 @@ export class World {
     this.start('leash');
   }
 
-  setWalkInput(dir) { this.owner.walkInput = this.scene === 'park' ? dir : 0; }
+  setWalkInput(dir) {
+    const o = this.owner;
+    o.walkInput = this.scene === 'park' ? dir : 0;
+    o.steer = null;
+    o.goal = null;
+  }
+
+  // On a map walk you can also leave the route: walk in a direction (x, y)
+  // while it's held, or walk to a spot.
+  steer(x, y) {
+    if (this.scene !== 'park') return;
+    const o = this.owner;
+    o.goal = null;
+    o.steer = x || y ? { x, y } : null;
+    o.walkInput = o.steer ? 1 : 0;
+  }
+
+  walkToward(point) {
+    if (this.scene !== 'park') return;
+    const o = this.owner;
+    o.steer = null;
+    o.goal = point ? { x: point.x, y: point.y } : null;
+    o.walkInput = point ? 1 : 0;
+  }
 
   // Walk or jog.
   setJog(on) { this.owner.jog = on; }

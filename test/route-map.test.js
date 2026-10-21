@@ -166,3 +166,44 @@ test('a route saved without its map is still walked side-on', () => {
   for (let i = 0; i < 200; i++) w.update(0.05);
   assert.ok(w.routeMeters() > 5);
 });
+
+test('off the route, houses are in the way, for you and your pet', async () => {
+  const { walkable } = await import('../src/blocks.js');
+  const w = walker(buildWalk(routePts, area));
+  const blocks = w.walk.blocks;
+  // The house is south of the first street, 150 to 180 m east of the start.
+  const house = w.walk.route.map.buildings.find((b) => b.h === 7);
+  const xs = house.p.filter((_, i) => i % 2 === 0);
+  const ys = house.p.filter((_, i) => i % 2 === 1);
+  const middle = { x: ((Math.min(...xs) + Math.max(...xs)) / 2) * U, y: ((Math.min(...ys) + Math.max(...ys)) / 2) * U };
+  assert.ok(!walkable(blocks, middle.x / U, middle.y / U), 'the house is solid');
+  w.owner.s = 165 * U;
+  w.setWalkInput(1);
+  w.update(0.05);
+  w.setWalkInput(0);
+  for (let i = 0; i < 40; i++) w.update(0.05);
+  // Walk straight at the house and keep pushing.
+  w.walkToward(middle);
+  let petInside = 0;
+  for (let i = 0; i < 400; i++) {
+    w.update(0.05);
+    if (!walkable(blocks, w.body.x / U, w.body.y / U)) petInside++;
+  }
+  assert.ok(walkable(blocks, w.owner.x / U, w.owner.y / U), 'you stopped at the wall');
+  assert.ok(Math.hypot(w.owner.x - middle.x, w.owner.y - middle.y) > 4 * U, 'and stayed outside');
+  assert.equal(petInside, 0, 'your pet never went inside');
+});
+
+test('the arrow keys walk you anywhere; Walk on brings you back to the route', () => {
+  const w = walker(buildWalk(routePts, area));
+  const start = { x: w.owner.x, y: w.owner.y };
+  w.steer(0, 1); // south, off the route
+  for (let i = 0; i < 60; i++) w.update(0.05);
+  assert.ok(w.owner.y - start.y > 3 * U, 'walked south');
+  w.steer(0, 0);
+  w.setWalkInput(1);
+  for (let i = 0; i < 400; i++) w.update(0.05);
+  assert.ok(w.routeMeters() > 20, `got going along the route (${w.routeMeters().toFixed(1)} m)`);
+  // Back on the route (give or take a tug from your pet).
+  assert.ok(Math.abs(w.owner.y - start.y) < 1.5 * U, `back on it (${((w.owner.y - start.y) / U).toFixed(2)} m off)`);
+});
