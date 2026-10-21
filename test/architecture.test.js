@@ -11,7 +11,7 @@ import { mapSpace } from '../src/space-map.js';
 const read = (f) => readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8');
 const imports = (src) => [...src.matchAll(/from '\.\/([^']+)'/g)].map((m) => m[1]);
 
-const CORE = ['pet.js', 'learning.js', 'bond.js', 'finds.js', 'commands.js', 'owner-look.js', 'route.js', 'route-map.js', 'paths.js', 'blocks.js', 'explore.js'];
+const CORE = ['pet.js', 'learning.js', 'bond.js', 'finds.js', 'commands.js', 'owner-look.js', 'route.js', 'route-map.js', 'paths.js', 'blocks.js', 'explore.js', 'mvt.js'];
 const VIEW_ONLY = ['renderer.js', 'pet-art.js', 'owner-art.js', 'finds-art.js', 'route-art.js', 'map-art.js', 'scene3d.js', 'main.js'];
 
 test('core modules depend only on other core modules', () => {

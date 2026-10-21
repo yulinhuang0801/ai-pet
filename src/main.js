@@ -18,12 +18,12 @@ import { imagerySource } from './imagery.js';
 import { SKIN_TONES, HAIR_COLORS, HAIR_STYLES, TOP_COLORS, BOTTOM_COLORS, defaultOwner } from './owner-look.js';
 import { Voice, VOICE_SLOTS } from './sound.js';
 import { MediaStore, photoToBlob, blobToImage } from './media-store.js';
-import { MapPlanner, routeThumbnail, rebuildRoute, withoutMap, overpass } from './map-planner.js';
+import { MapPlanner, routeThumbnail, rebuildRoute, withoutMap, mapArea } from './map-planner.js';
 import { Explorer } from './explore.js';
 import { MAP_UNITS_PER_METER } from './space-map.js';
 
 // Shown under the route planner, so it's easy to tell which version a browser is running.
-const VERSION = '2026-10-22a';
+const VERSION = '2026-10-22b';
 const SAVE_KEY = 'ai-pet/v1';
 const PREFS_KEY = 'ai-pet/prefs';
 const speed = Number(new URLSearchParams(location.search).get('speed')) || 1;
@@ -652,7 +652,7 @@ function placeThumb(p) {
 // A spot on the map is walked by exploring from it, the map loading as you go.
 const walkPlace = (p) => ({
   id: p.id, kind: placeKind(p), name: p.name, route: p.route,
-  area: p.kind === 'spot' ? new Explorer(p.at, { fetchOsm: (q) => overpass(q, 30000) }).area : undefined,
+  area: p.kind === 'spot' ? new Explorer(p.at, { fetchArea: mapArea }).area : undefined,
 });
 
 // Walk a place. Routes saved before walks were drawn from above have no map

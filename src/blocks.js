@@ -312,7 +312,8 @@ function paint(blocks, map, fresh, box = null) {
   for (const l of map.lines) {
     if (l.k === 'river' || l.k === 'stream') strokeLine(l.p, (l.w ?? (l.k === 'river' ? 9 : 2)) / 2, (i, j) => grid.set(i, j, B.WATER));
   }
-  const separate = separatePavements(map.lines.filter((l) => l.k === 'sidewalk'));
+  // Pavements drawn as their own lines: tagged as such, or footways (vector tiles don't say which footways are pavements).
+  const separate = separatePavements(map.lines.filter((l) => l.k === 'sidewalk' || (l.k === 'path' && l.hw === 'footway')));
   const ways = map.lines.filter((l) => ['path', 'sidewalk', 'crossing', 'service', 'minor', 'major'].includes(l.k));
   const order = { path: 0, sidewalk: 1, service: 2, minor: 3, major: 4, crossing: 5 };
   ways.sort((p, q) => order[p.k] - order[q.k]);

@@ -5,7 +5,8 @@
 // a site that can reach them (not every preview can). Routes saved before
 // walks started from a pin are still walked, and drawn in the places list.
 
-import { overpassQuery, buildWalk, routeLength } from './route.js';
+import { overpassQuery, boxesQuery, buildWalk, routeLength } from './route.js';
+import { decodeTile, tileElements, tilesFor } from './mvt.js';
 
 const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const SEARCH = 'https://nominatim.openstreetmap.org/search';
@@ -24,6 +25,52 @@ async function fetchWithin(url, options, ms) {
     return await fetch(url, { ...options, signal: ctrl.signal });
   } finally {
     clearTimeout(timer);
+  }
+}
+
+// --- Map data for walking from a pin ---
+
+// OpenStreetMap as vector tiles, from OpenFreeMap's CDN: free, no key, and fast,
+// because the tiles are made in advance. Zoom 14 tiles hold every building,
+// road and path; one covers about 2 km.
+const VECTOR = 'https://tiles.openfreemap.org/planet';
+const Z = 14;
+let tileTemplate = null;
+const vectorTiles = new Map(); // "x/y" -> Promise of elements
+
+function vectorTile(x, y) {
+  const key = `${x}/${y}`;
+  if (!vectorTiles.has(key)) {
+    tileTemplate ??= fetchWithin(VECTOR, {}, 10000).then((r) => r.json()).then((j) => j.tiles[0]).catch((err) => { tileTemplate = null; throw err; });
+    const job = tileTemplate
+      .then((url) => fetchWithin(url.replace('{z}', Z).replace('{x}', x).replace('{y}', y), {}, 20000))
+      .then((res) => { if (!res.ok) throw new Error(`Map tile ${res.status}`); return res.arrayBuffer(); })
+      .then((buf) => tileElements(decodeTile(new Uint8Array(buf)), Z, x, y));
+    job.catch(() => vectorTiles.delete(key));
+    vectorTiles.set(key, job);
+  }
+  return vectorTiles.get(key);
+}
+
+// Whether an element has any point inside a box [south, west, north, east].
+function touches(el, [s, w, n, e]) {
+  if (el.type === 'node') return el.lat >= s && el.lat <= n && el.lon >= w && el.lon <= e;
+  let south = 90; let north = -90; let west = 180; let east = -180;
+  for (const g of el.geometry) {
+    south = Math.min(south, g.lat); north = Math.max(north, g.lat);
+    west = Math.min(west, g.lon); east = Math.max(east, g.lon);
+  }
+  return south <= n && north >= s && west <= e && east >= w;
+}
+
+// The map data for a box [south, west, north, east]: from vector tiles, or,
+// if they can't be had, from the Overpass API.
+export async function mapArea(box) {
+  try {
+    const parts = await Promise.all(tilesFor(box, Z).map(([x, y]) => vectorTile(x, y)));
+    return { elements: parts.flat().filter((el) => touches(el, box)) };
+  } catch {
+    return overpass(boxesQuery([box]), 30000);
   }
 }
 

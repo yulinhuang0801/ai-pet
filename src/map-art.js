@@ -15,7 +15,7 @@ import {
 import { sign, landmarkName } from './route-art.js';
 import { projector } from './route.js';
 import { buildBlocks, B, CHUNK } from './blocks.js';
-import { TILE } from './explore.js';
+import { TILE, tileBox } from './explore.js';
 
 // Screen pixels per map unit, which the mouse wheel changes. On satellite
 // photos it can't go closer than the photos are sharp (`photoCap`).
@@ -746,7 +746,8 @@ function drawAreaMap(ctx, world, area) {
   for (const [key, t] of area.explore.tiles) {
     if (t.state !== 'ready') continue;
     const [i, j] = key.split(',').map(Number);
-    const [ax, ay] = at(i * TILE, j * TILE);
+    const b = tileBox(i, j);
+    const [ax, ay] = at(b.x0, b.y0);
     ctx.fillRect(ax, ay, TILE * k, TILE * k);
   }
   ctx.strokeStyle = 'rgba(80, 84, 92, 0.7)';

@@ -25,3 +25,7 @@ This project's build environment could only reach GitHub, so the files were take
 ## Map blocks
 
 The rules for turning OpenStreetMap features into blocks in `src/blocks.js` (which material each kind of land, road and surface becomes, and how wide each kind of road is) follow [Arnis](https://github.com/louis-e/arnis) by Louis Erbkamm and contributors, licensed under the [Apache License 2.0](https://github.com/louis-e/arnis/blob/main/LICENSE). No Arnis code is copied; the rules are re-expressed in JavaScript.
+
+## Map data
+
+Map walks use OpenStreetMap data (© OpenStreetMap contributors, [ODbL](https://www.openstreetmap.org/copyright)), served as vector tiles in the [OpenMapTiles](https://openmaptiles.org) schema by [OpenFreeMap](https://openfreemap.org), with the [Overpass API](https://overpass-api.de) as a fallback.

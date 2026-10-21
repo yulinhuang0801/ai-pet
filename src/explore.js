@@ -1,11 +1,13 @@
 // Walking from a pinned spot with no route: the map loads around you as you
-// go, a square of it at a time, the way Minecraft loads chunks. Each square is
-// fetched from OpenStreetMap, built into blocks (blocks.js) and added to one
-// growing area that the walk stands on.
+// go, a square of it at a time, the way Minecraft loads chunks. Each square's
+// OpenStreetMap data is fetched (by the caller: from vector tiles, or the
+// Overpass API), built into blocks (blocks.js) and added to one growing area
+// that the walk stands on. The first square is centred on the pin, so one
+// square is enough to start.
 //
 // Positions are map metres from the pinned spot: x east, y south.
 
-import { projector, boxesQuery, landmarksIn } from './route.js';
+import { projector, landmarksIn } from './route.js';
 import { extractMap } from './route-map.js';
 import { emptyBlocks, addArea, CHUNK } from './blocks.js';
 
@@ -14,10 +16,15 @@ const MARGIN = 40; // map data fetched around each square, so its edges come out
 const AHEAD = 120; // load squares within this many metres of you
 const RETRY = 20000; // ms before trying a square that failed again
 
+// Which square a point is in, and a square's edges: square (0, 0) is centred on the pin.
+export const tileOf = (v) => Math.floor((v + TILE / 2) / TILE);
+export const tileBox = (i, j) => ({ x0: i * TILE - TILE / 2, y0: j * TILE - TILE / 2, x1: (i + 1) * TILE - TILE / 2, y1: (j + 1) * TILE - TILE / 2 });
+
 export class Explorer {
-  // `origin` is [lat, lon]; `fetchOsm(query)` resolves with Overpass JSON.
-  constructor(origin, { fetchOsm, now = () => Date.now() }) {
-    this.fetchOsm = fetchOsm;
+  // `origin` is [lat, lon]; `fetchArea([south, west, north, east])` resolves
+  // with OpenStreetMap-style JSON (as the Overpass API returns) for that box.
+  constructor(origin, { fetchArea, now = () => Date.now() }) {
+    this.fetchArea = fetchArea;
     this.now = now;
     this.project = projector(origin);
     const one = this.project([origin[0] + 0.001, origin[1] + 0.001]);
@@ -46,7 +53,7 @@ export class Explorer {
 
   // Is the square under this point loaded?
   ready(x, y) {
-    return this.tiles.get(`${Math.floor(x / TILE)},${Math.floor(y / TILE)}`)?.state === 'ready';
+    return this.tiles.get(`${tileOf(x)},${tileOf(y)}`)?.state === 'ready';
   }
 
   get loading() { return this.busy; }
@@ -55,14 +62,12 @@ export class Explorer {
   update(x, y) {
     if (this.busy) return null;
     const wanted = [];
-    for (let i = Math.floor((x - AHEAD) / TILE); i <= Math.floor((x + AHEAD) / TILE); i++) {
-      for (let j = Math.floor((y - AHEAD) / TILE); j <= Math.floor((y + AHEAD) / TILE); j++) {
+    for (let i = tileOf(x - AHEAD); i <= tileOf(x + AHEAD); i++) {
+      for (let j = tileOf(y - AHEAD); j <= tileOf(y + AHEAD); j++) {
         const t = this.tiles.get(`${i},${j}`);
         if (t?.state === 'ready' || t?.state === 'loading') continue;
         if (t?.state === 'failed' && this.now() - t.at < RETRY) continue;
-        const cx = (i + 0.5) * TILE;
-        const cy = (j + 0.5) * TILE;
-        wanted.push({ i, j, d: Math.hypot(cx - x, cy - y) });
+        wanted.push({ i, j, d: Math.hypot(i * TILE - x, j * TILE - y) });
       }
     }
     if (!wanted.length) return null;
@@ -75,11 +80,11 @@ export class Explorer {
     this.tiles.set(key, { state: 'loading', at: this.now() });
     this.busy = true;
     try {
-      const box = { x0: i * TILE, y0: j * TILE, x1: (i + 1) * TILE, y1: (j + 1) * TILE };
-      // Overpass boxes are [south, west, north, east].
+      const box = tileBox(i, j);
+      // Boxes on the globe are [south, west, north, east].
       const [north, west] = this.latLon(box.x0 - MARGIN, box.y0 - MARGIN);
       const [south, east] = this.latLon(box.x1 + MARGIN, box.y1 + MARGIN);
-      const osm = await this.fetchOsm(boxesQuery([[south, west, north, east]]));
+      const osm = await this.fetchArea([south, west, north, east]);
       this.add(box, osm);
       this.tiles.set(key, { state: 'ready', at: this.now() });
     } catch (err) {
