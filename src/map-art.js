@@ -14,6 +14,7 @@ import {
 } from './renderer.js';
 import { sign, landmarkName } from './route-art.js';
 import { projector } from './route.js';
+import { buildBlocks, B, CHUNK } from './blocks.js';
 
 // Screen pixels per map unit, which the mouse wheel changes. On satellite
 // photos it can't go closer than the photos are sharp (`photoCap`).
@@ -27,6 +28,7 @@ const HEIGHT = 0.35;
 const AREA_COLOURS = {
   residential: '#e7e6dc', commercial: '#eedfd8', farmland: '#ebe3bb', grass: '#bfe09c', park: '#acd88d',
   cemetery: '#bad6a6', woods: '#86b96f', pitch: '#93d27c', playground: '#d7eec4', parking: '#d9d5cc', beach: '#f2e2b4', water: '#8fc6ec',
+  industrial: '#e2dcdc', flowerbed: '#c9a27e', plaza: '#e9e4da',
 };
 // Road widths in metres (when the map doesn't say) and colours.
 const ROAD = {
@@ -545,6 +547,103 @@ function drawImagery(ctx, m, cam, fallback) {
 
 export const imageryOn = () => Boolean(imagery);
 
+// --- the block look ---
+
+// Shown as blocks (true) or drawn from the map's shapes (false), when not on photos.
+let blockLook = true;
+export function setBlockLook(on) { blockLook = on; }
+
+const BLOCK_COLOURS = {
+  [B.GRASS]: [118, 176, 84], [B.DIRT]: [150, 112, 74], [B.SAND]: [226, 208, 150], [B.GRAVEL]: [150, 146, 140],
+  [B.PAVEMENT]: [214, 211, 204], [B.PAVING]: [196, 178, 158], [B.ASPHALT]: [94, 97, 104], [B.PARKING]: [124, 126, 132],
+  [B.WATER]: [72, 136, 212], [B.PITCH]: [92, 168, 82], [B.PLAYGROUND]: [214, 136, 92], [B.FARMLAND]: [160, 128, 72],
+  [B.FOREST]: [84, 128, 64], [B.CYCLEWAY]: [176, 92, 82], [B.RAIL]: [86, 74, 62], [B.LINE]: [244, 244, 240],
+  [B.LINE_YELLOW]: [238, 196, 64], [B.ZEBRA]: [242, 242, 238], [B.FLOWERS]: [200, 110, 150], [B.CEMETERY]: [108, 140, 92],
+  [B.WOOD]: [150, 110, 64], [B.KERB]: [178, 178, 172], [B.FENCE]: [120, 90, 60], [B.HEDGE]: [58, 118, 52],
+};
+const ROOF_COLOURS = [[186, 104, 84], [160, 88, 72], [128, 132, 142], [176, 120, 88], [204, 140, 96], [112, 118, 130], [190, 128, 108]];
+const LEAVES = [[64, 128, 56], [78, 146, 64], [56, 112, 50]];
+
+// The blocks for a route, built once and kept.
+function blocksFor(m, route) {
+  m.blocks ??= buildBlocks(route.map, route.line);
+  m.chunkImages ??= new Map();
+  return m.blocks;
+}
+
+// One picture per chunk, a pixel per block, with a little variety so it reads like a
+// block world rather than flat paint.
+function chunkImage(m, c) {
+  const key = `${c.ci},${c.cj}`;
+  let canvas = m.chunkImages.get(key);
+  if (canvas) return canvas;
+  canvas = document.createElement('canvas');
+  canvas.width = CHUNK;
+  canvas.height = CHUNK;
+  const g = canvas.getContext('2d');
+  const img = g.createImageData(CHUNK, CHUNK);
+  const blocks = m.blocks;
+  const i0 = c.ci * CHUNK;
+  const j0 = c.cj * CHUNK;
+  for (let n = 0; n < CHUNK * CHUNK; n++) {
+    const i = i0 + (n % CHUNK);
+    const j = j0 + Math.floor(n / CHUNK);
+    const id = c.block[n];
+    let rgb;
+    let k = 1 + (hash(i * 7919 + j * 104729) - 0.5) * 0.12;
+    if (id === B.BUILDING) {
+      const house = c.house[n] - 1;
+      rgb = ROOF_COLOURS[Math.floor(hash(house) * ROOF_COLOURS.length)];
+      // Roof edges and the line between neighbouring houses are darker, so each house shows.
+      const edge = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([di, dj]) => {
+        const nb = blocks.grid.chunkAt(i + di, j + dj);
+        if (!nb) return true;
+        const m2 = (j + dj - nb.cj * CHUNK) * CHUNK + (i + di - nb.ci * CHUNK);
+        return nb.block[m2] !== B.BUILDING || nb.house[m2] !== c.house[n];
+      });
+      k = edge ? 0.72 : 1 + (hash(house * 31 + (i + j)) - 0.5) * 0.05;
+    } else rgb = BLOCK_COLOURS[id] ?? [118, 176, 84];
+    img.data.set([rgb[0] * k, rgb[1] * k, rgb[2] * k, 255], n * 4);
+  }
+  // Tree tops, as clumps of leaf blocks.
+  for (const t of blocks.trees) {
+    if (t.x + t.r < i0 || t.x - t.r > i0 + CHUNK || t.y + t.r < j0 || t.y - t.r > j0 + CHUNK) continue;
+    for (let j = Math.floor(t.y - t.r); j <= Math.ceil(t.y + t.r); j++) {
+      for (let i = Math.floor(t.x - t.r); i <= Math.ceil(t.x + t.r); i++) {
+        if (i < i0 || i >= i0 + CHUNK || j < j0 || j >= j0 + CHUNK) continue;
+        const d = Math.hypot(i + 0.5 - t.x, j + 0.5 - t.y);
+        if (d > t.r) continue;
+        const leaf = LEAVES[Math.floor(hash(i * 13 + j * 7) * LEAVES.length)];
+        const k = d > t.r - 0.8 ? 0.8 : 1.05 - (d / t.r) * 0.15;
+        img.data.set([leaf[0] * k, leaf[1] * k, leaf[2] * k, 255], ((j - j0) * CHUNK + (i - i0)) * 4);
+      }
+    }
+  }
+  g.putImageData(img, 0, 0);
+  m.chunkImages.set(key, canvas);
+  return canvas;
+}
+
+function drawBlocks(ctx, m, route, cam) {
+  const blocks = blocksFor(m, route);
+  ctx.fillStyle = '#c9cebf';
+  ctx.fillRect(cam.x, cam.y, VIEW_W / zoom, VIEW_H / zoom);
+  const size = CHUNK * U;
+  const ci0 = Math.floor(cam.x / size);
+  const cj0 = Math.floor(cam.y / size);
+  const ci1 = Math.floor((cam.x + VIEW_W / zoom) / size);
+  const cj1 = Math.floor((cam.y + VIEW_H / zoom) / size);
+  ctx.imageSmoothingEnabled = false;
+  for (let ci = ci0; ci <= ci1; ci++) {
+    for (let cj = cj0; cj <= cj1; cj++) {
+      const c = blocks.grid.chunks.get(`${ci},${cj}`);
+      // A hair of overlap hides the seams between chunks.
+      if (c) ctx.drawImage(chunkImage(m, c), ci * size, cj * size, size + 1 / zoom, size + 1 / zoom);
+    }
+  }
+  ctx.imageSmoothingEnabled = true;
+}
+
 // --- the whole scene ---
 
 export function drawMapWalk(ctx, world, { date = new Date(), time = world.time, images = {} } = {}) {
@@ -571,8 +670,12 @@ export function drawMapWalk(ctx, world, { date = new Date(), time = world.time, 
 
   const lines = m.lines.filter((l) => visible(l.box));
   const photo = Boolean(imagery);
+  const blocky = !photo && blockLook;
   if (photo) drawImagery(ctx, m, cam, () => drawGround(ctx, m, visible, lines));
+  else if (blocky) drawBlocks(ctx, m, route, cam);
   else drawGround(ctx, m, visible, lines);
+  // The photo or the blocks already show buildings and trees.
+  const flat = photo || blocky;
 
   // Your route: dashed ahead, a soft trail where you've been.
   ctx.strokeStyle = 'rgba(29, 109, 100, 0.55)';
@@ -583,7 +686,7 @@ export function drawMapWalk(ctx, world, { date = new Date(), time = world.time, 
 
   // Shadows on the ground (a photo has its own).
   ctx.fillStyle = 'rgba(40, 50, 30, 0.16)';
-  for (const t of photo ? [] : m.trees) {
+  for (const t of flat ? [] : m.trees) {
     if (t.x < view.x0 || t.x > view.x1 || t.y < view.y0 || t.y > view.y1) continue;
     ctx.beginPath();
     ctx.ellipse(t.x + t.r * 0.25, t.y, t.r * 0.95, t.r * 0.45, 0, 0, Math.PI * 2);
@@ -593,8 +696,8 @@ export function drawMapWalk(ctx, world, { date = new Date(), time = world.time, 
   // Everything standing up, back to front.
   const things = [];
   const see = [world.owner, world.body];
-  for (const b of photo ? [] : m.buildings) if (visible(b.box)) things.push({ y: b.box.y1, draw: () => drawBuilding(ctx, b, see) });
-  for (const t of photo ? [] : m.trees) {
+  for (const b of flat ? [] : m.buildings) if (visible(b.box)) things.push({ y: b.box.y1, draw: () => drawBuilding(ctx, b, see) });
+  for (const t of flat ? [] : m.trees) {
     if (t.x < view.x0 || t.x > view.x1 || t.y < view.y0 || t.y > view.y1) continue;
     things.push({ y: t.y, draw: () => drawTree(ctx, t, dark > 0.5) });
   }

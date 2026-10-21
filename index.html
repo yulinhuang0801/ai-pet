@@ -142,7 +142,14 @@
         <button type="button" id="walk-back" class="hold">Walk back</button>
         <button type="button" id="walk-on" class="hold primary">Walk on</button>
         <button type="button" id="walk-jog" class="ghost" aria-pressed="false">Jog</button>
-        <button type="button" id="walk-look" class="ghost" aria-pressed="false" hidden>Satellite</button>
+        <label class="walk-look" id="walk-look-wrap" hidden>
+          <span class="sr-only">Map look</span>
+          <select id="walk-look">
+            <option value="blocks">Blocks</option>
+            <option value="photo">Satellite</option>
+            <option value="drawn">Drawn</option>
+          </select>
+        </label>
         <button type="button" id="walk-leash" class="ghost" hidden aria-pressed="true">Leash on</button>
         <span class="walk-stat" id="walk-stat"></span>
         <button type="button" id="walk-home">Head home</button>

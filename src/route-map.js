@@ -130,7 +130,7 @@ export function stitchRings(pieces) {
 
 const AREA_KINDS = [
   // Drawn in this order, so later kinds lie on top.
-  'residential', 'commercial', 'farmland', 'grass', 'park', 'cemetery', 'woods', 'pitch', 'playground', 'parking', 'beach', 'water',
+  'residential', 'commercial', 'industrial', 'farmland', 'grass', 'park', 'cemetery', 'woods', 'flowerbed', 'pitch', 'playground', 'parking', 'plaza', 'beach', 'water',
 ];
 
 function areaKind(t) {
@@ -142,11 +142,13 @@ function areaKind(t) {
   if (t.amenity === 'parking') return 'parking';
   if (t.landuse === 'cemetery' || t.amenity === 'grave_yard') return 'cemetery';
   if (['park', 'garden', 'recreation_ground', 'common', 'nature_reserve', 'golf_course'].includes(t.leisure)) return 'park';
-  if (['grass', 'meadow', 'village_green', 'recreation_ground', 'allotments', 'flowerbed'].includes(t.landuse) || t.natural === 'grassland' || t.natural === 'heath') return 'grass';
+  if (t.landuse === 'flowerbed') return 'flowerbed';
+  if (['grass', 'meadow', 'village_green', 'recreation_ground', 'allotments'].includes(t.landuse) || t.natural === 'grassland' || t.natural === 'heath') return 'grass';
   if (['farmland', 'orchard', 'vineyard', 'farmyard'].includes(t.landuse)) return 'farmland';
   if (['commercial', 'retail'].includes(t.landuse) || t.amenity === 'marketplace') return 'commercial';
   if (t.landuse === 'residential') return 'residential';
-  if (t.highway === 'pedestrian' && t.area === 'yes') return 'parking';
+  if (['industrial', 'railway', 'construction', 'brownfield'].includes(t.landuse)) return 'industrial';
+  if ((t.highway === 'pedestrian' && t.area === 'yes') || t.place === 'square' || t.highway === 'footway' && t.area === 'yes') return 'plaza';
   return null;
 }
 
@@ -238,8 +240,17 @@ export function extractMap(osm, project, line, pad = 110) {
     if (area) { addArea(area, geom); continue; }
     const kind = lineKind(t);
     if (!kind) continue;
+    // Details the block view uses: the road type, its surface, lanes and pavements.
+    const extra = {};
     const width = roadWidth(t);
-    for (const part of clipLine(simplify(geom.map(xy), 0.5), box)) lines.push(width ? { k: kind, p: flat(part), w: width } : { k: kind, p: flat(part) });
+    if (width) extra.w = width;
+    if (t.highway) extra.hw = t.highway;
+    if (t.surface) extra.s = t.surface;
+    const lanes = parseInt(t.lanes, 10);
+    if (lanes > 0 && lanes < 10) extra.l = lanes;
+    const sidewalk = t.sidewalk ?? (t['sidewalk:both'] ? 'both' : t['sidewalk:left'] === 'yes' ? 'left' : t['sidewalk:right'] === 'yes' ? 'right' : undefined);
+    if (sidewalk) extra.sw = sidewalk;
+    for (const part of clipLine(simplify(geom.map(xy), 0.5), box)) lines.push({ k: kind, p: flat(part), ...extra });
   }
   areas.sort((a, b) => AREA_KINDS.indexOf(a.k) - AREA_KINDS.indexOf(b.k));
   return { areas, lines, buildings, trees };

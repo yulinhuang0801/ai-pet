@@ -21,3 +21,7 @@ This project's build environment could only reach GitHub, so the files were take
 - Dogs: `public/models/dog-*.glb` in [teuzowebdeveloper9/world-light](https://github.com/teuzowebdeveloper9/world-light). That project's own licence is non-commercial, but it states that third-party CC0 assets keep their own licences. Before a commercial release, download the originals from Quaternius (poly.pizza or itch.io) to be safe.
 - Cat: `assets/models/toon_cat_free.glb` in [DevTakao/threejs-cat](https://github.com/DevTakao/threejs-cat), which includes the original licence file.
 - Mannequin and animations: [NoLimitNexus/game-models](https://github.com/NoLimitNexus/game-models) (`tools/reference/Mannequin_Medium.glb` and `library/animations/Rig_Medium_*.glb`), which includes KayKit's licence. That repository's own body and clothing parts have no licence, so they are **not** used here.
+
+## Map blocks
+
+The rules for turning OpenStreetMap features into blocks in `src/blocks.js` (which material each kind of land, road and surface becomes, and how wide each kind of road is) follow [Arnis](https://github.com/louis-e/arnis) by Louis Erbkamm and contributors, licensed under the [Apache License 2.0](https://github.com/louis-e/arnis/blob/main/LICENSE). No Arnis code is copied; the rules are re-expressed in JavaScript.

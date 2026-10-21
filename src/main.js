@@ -13,7 +13,7 @@ import { drawFind } from './finds-art.js';
 import { World, petScale } from './world.js';
 import { VIEW_W, VIEW_H } from './space-side.js';
 import { render } from './renderer.js';
-import { drawMapWalk, mapToWorld, zoomMap, setImagery, imageryOn } from './map-art.js';
+import { drawMapWalk, mapToWorld, zoomMap, setImagery, imageryOn, setBlockLook } from './map-art.js';
 import { imagerySource } from './imagery.js';
 import { SKIN_TONES, HAIR_COLORS, HAIR_STYLES, TOP_COLORS, BOTTOM_COLORS, defaultOwner } from './owner-look.js';
 import { Voice, VOICE_SLOTS } from './sound.js';
@@ -21,7 +21,7 @@ import { MediaStore, photoToBlob, blobToImage } from './media-store.js';
 import { RoutePlanner, routeThumbnail, rebuildRoute, withoutMap } from './map-planner.js';
 
 // Shown under the route planner, so it's easy to tell which version a browser is running.
-const VERSION = '2026-10-19d';
+const VERSION = '2026-10-21a';
 const SAVE_KEY = 'ai-pet/v1';
 const PREFS_KEY = 'ai-pet/prefs';
 const speed = Number(new URLSearchParams(location.search).get('speed')) || 1;
@@ -431,11 +431,21 @@ for (const [id, dir] of [['walk-back', -1], ['walk-on', 1]]) {
 
 // --- Satellite photos on map walks ---
 
+// --- How map walks look: blocks (the default), satellite photos, or drawn ---
+
+function setLook(id) {
+  if (id === 'photo') { usePhotos(true); return; }
+  setImagery(null);
+  setBlockLook(id !== 'drawn');
+  prefs.set('look', id);
+  if (world) renderPanel();
+}
+setBlockLook(prefs.get('look', 'blocks') !== 'drawn');
+
 async function usePhotos(on, { quiet = false } = {}) {
   const saved = prefs.get('imagery', null);
   if (!on) {
     setImagery(null);
-    prefs.set('look', 'drawn');
   } else if (!saved?.key) {
     openPhotoForm();
   } else {
@@ -463,7 +473,7 @@ function openPhotoForm() {
   $('imagery-key').focus({ preventScroll: true });
 }
 
-$('walk-look').addEventListener('click', () => usePhotos(!imageryOn()));
+$('walk-look').addEventListener('change', (e) => setLook(e.target.value));
 $('map-photos').addEventListener('click', openPhotoForm);
 $('imagery-close').addEventListener('click', () => { $('imagery-form').hidden = true; });
 $('imagery-provider').value = prefs.get('imagery', null)?.provider ?? 'esri';
@@ -939,8 +949,8 @@ function renderPanel() {
   if (onWalk) {
     leash.setAttribute('aria-pressed', String(!world.walk.offLeash));
     $('walk-jog').setAttribute('aria-pressed', String(Boolean(world.owner.jog)));
-    $('walk-look').hidden = !onMap();
-    $('walk-look').setAttribute('aria-pressed', String(imageryOn()));
+    $('walk-look-wrap').hidden = !onMap();
+    if (document.activeElement !== $('walk-look')) $('walk-look').value = imageryOn() ? 'photo' : prefs.get('look', 'blocks') === 'drawn' ? 'drawn' : 'blocks';
     leash.textContent = world.walk.offLeash ? 'Leash off' : 'Leash on';
   }
   renderFinds();
