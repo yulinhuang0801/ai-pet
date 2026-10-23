@@ -23,7 +23,7 @@ import { Explorer } from './explore.js';
 import { MAP_UNITS_PER_METER } from './space-map.js';
 
 // Shown under the route planner, so it's easy to tell which version a browser is running.
-const VERSION = '2026-10-22b';
+const VERSION = '2026-10-23b';
 const SAVE_KEY = 'ai-pet/v1';
 const PREFS_KEY = 'ai-pet/prefs';
 const speed = Number(new URLSearchParams(location.search).get('speed')) || 1;
