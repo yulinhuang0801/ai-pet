@@ -15,6 +15,7 @@ export const TILE = CHUNK * 8; // 256 m squares
 const MARGIN = 40; // map data fetched around each square, so its edges come out whole
 const AHEAD = 120; // load squares within this many metres of you
 const RETRY = 20000; // ms before trying a square that failed again
+const PARALLEL = 3; // squares fetched at the same time
 
 // Which square a point is in, and a square's edges: square (0, 0) is centred on the pin.
 export const tileOf = (v) => Math.floor((v + TILE / 2) / TILE);
@@ -30,7 +31,7 @@ export class Explorer {
     const one = this.project([origin[0] + 0.001, origin[1] + 0.001]);
     this.perDegree = { x: one[0] / 0.001, y: one[1] / 0.001 };
     this.tiles = new Map(); // "i,j" -> { state: 'loading' | 'ready' | 'failed', at }
-    this.busy = false;
+    this.active = 0;
     // Shaped like a saved route, so the walk and its drawing treat both alike.
     this.area = {
       origin,
@@ -56,11 +57,11 @@ export class Explorer {
     return this.tiles.get(`${tileOf(x)},${tileOf(y)}`)?.state === 'ready';
   }
 
-  get loading() { return this.busy; }
+  get loading() { return this.active > 0; }
 
   // Call as you move: starts loading the nearest square not yet loaded near (x, y).
   update(x, y) {
-    if (this.busy) return null;
+    if (this.active >= PARALLEL) return null;
     const wanted = [];
     for (let i = tileOf(x - AHEAD); i <= tileOf(x + AHEAD); i++) {
       for (let j = tileOf(y - AHEAD); j <= tileOf(y + AHEAD); j++) {
@@ -78,7 +79,7 @@ export class Explorer {
   async load(i, j) {
     const key = `${i},${j}`;
     this.tiles.set(key, { state: 'loading', at: this.now() });
-    this.busy = true;
+    this.active++;
     try {
       const box = tileBox(i, j);
       // Boxes on the globe are [south, west, north, east].
@@ -90,7 +91,7 @@ export class Explorer {
     } catch (err) {
       this.tiles.set(key, { state: 'failed', at: this.now(), error: err.message });
     } finally {
-      this.busy = false;
+      this.active--;
     }
   }
 

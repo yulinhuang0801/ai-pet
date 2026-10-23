@@ -140,12 +140,17 @@
       </div>
       <div class="actions" role="toolbar" aria-label="Walking" id="walk-actions" hidden>
         <button type="button" id="walk-jog" class="ghost" aria-pressed="false">Jog</button>
+        <span class="walk-turn" id="walk-turn" hidden>
+          <button type="button" class="ghost" id="walk-turn-l" aria-label="Turn the view left">⟲ View</button>
+          <button type="button" class="ghost" id="walk-turn-r" aria-label="Turn the view right">View ⟳</button>
+        </span>
         <label class="walk-look" id="walk-look-wrap" hidden>
           <span class="sr-only">Map look</span>
           <select id="walk-look">
             <option value="blocks">Blocks</option>
             <option value="photo">Satellite</option>
             <option value="drawn">Drawn</option>
+            <option value="3d">3D (preview)</option>
           </select>
         </label>
         <button type="button" id="walk-leash" class="ghost" hidden aria-pressed="true">Leash on</button>

@@ -115,9 +115,10 @@ export function withoutMap(route) {
 }
 
 export class MapPlanner {
-  constructor(els, { onStart, toast }) {
+  constructor(els, { onStart, onPin, toast }) {
     this.els = els;
     this.onStart = onStart;
+    this.onPin = onPin;
     this.toast = toast;
     this.at = null; // the pinned spot, [lat, lon]
     this.placeName = '';
@@ -169,6 +170,7 @@ export class MapPlanner {
   // Drop the pin where your walk starts.
   pin(at, name = '') {
     this.at = at;
+    this.onPin?.(at);
     if (name) this.placeName = name;
     const L = this.L;
     if (L) {

@@ -131,3 +131,18 @@ test('a building split between two squares of map stays one house', async () => 
   const houseAt = (x, y) => { const c = grid.chunkAt(x, y); return c.house[(y - c.cj * 32) * 32 + (x - c.ci * 32)]; };
   assert.equal(houseAt(edge - 5, 25), houseAt(edge + 5, 25));
 });
+
+test('up to three squares are fetched at once, and no more', async () => {
+  let started = 0;
+  const release = [];
+  const ex = new Explorer([LAT, LON], { fetchArea: () => { started++; return new Promise((resolve) => release.push(() => resolve(osm))); } });
+  // Standing on a corner, four squares are within reach.
+  const loads = [ex.update(TILE / 2, TILE / 2), ex.update(TILE / 2, TILE / 2), ex.update(TILE / 2, TILE / 2), ex.update(TILE / 2, TILE / 2)];
+  assert.equal(started, 3, 'three started');
+  assert.equal(loads[3], null, 'the fourth waits');
+  assert.ok(ex.loading);
+  release.forEach((r) => r());
+  await Promise.all(loads.filter(Boolean));
+  assert.ok(!ex.loading);
+  assert.ok(ex.update(TILE / 2, TILE / 2), 'then the last one goes');
+});
