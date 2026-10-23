@@ -20,11 +20,10 @@ import { Voice, VOICE_SLOTS } from './sound.js';
 import { MediaStore, photoToBlob, blobToImage } from './media-store.js';
 import { MapPlanner, routeThumbnail, rebuildRoute, withoutMap, mapArea } from './map-planner.js';
 import { Explorer } from './explore.js';
-import { buildWalk, bbox } from './route.js';
 import { MAP_UNITS_PER_METER } from './space-map.js';
 
 // Shown under the route planner, so it's easy to tell which version a browser is running.
-const VERSION = '2026-10-23a';
+const VERSION = '2026-10-22b';
 const SAVE_KEY = 'ai-pet/v1';
 const PREFS_KEY = 'ai-pet/prefs';
 const speed = Number(new URLSearchParams(location.search).get('speed')) || 1;
@@ -650,44 +649,15 @@ function placeThumb(p) {
   return `<span class="thumb-art ${p.id}"></span>`;
 }
 
-// Map walks are side-on by default: the same scrolling scene and animations as
-// home, with the setting along the way taken from the real map. "From above" is
-// the blocks, drawn or satellite view.
-const sideView = () => prefs.get('mapview', 'side') === 'side';
-
-// A spot has no route, so side-on it gets a straight run east from the pin, with
-// the map's parks, water and streets deciding the setting along the way.
-async function sideRouteFrom(at) {
-  const kmLon = 1 / (111320 * Math.cos((at[0] * Math.PI) / 180));
-  const points = [at, [at[0], at[1] + 1500 * kmLon]];
-  return { ...buildWalk(points, await mapArea(bbox(points, 60))), map: undefined };
-}
-
 // A spot on the map is walked by exploring from it, the map loading as you go.
 const walkPlace = (p) => ({
   id: p.id, kind: placeKind(p), name: p.name, route: p.route,
   area: p.kind === 'spot' ? new Explorer(p.at, { fetchArea: mapArea }).area : undefined,
 });
 
-// The side-on version of a map place: a route with no map drawn from above.
-async function sideWalkPlace(p) {
-  if (p.kind === 'spot') {
-    toast('Looking at the map around this spot…');
-    try {
-      return { id: p.id, kind: 'route', name: p.name, route: await sideRouteFrom(p.at) };
-    } catch (err) {
-      toast(`Couldn’t fetch the map: ${err.message} Walking a plain park instead.`, 'note');
-      return { id: 'park', kind: 'park', name: p.name };
-    }
-  }
-  return { id: p.id, kind: 'route', name: p.name, route: { ...p.route, map: undefined } };
-}
-
 // Walk a place. Routes saved before walks were drawn from above have no map
 // yet: fetch it once and keep it.
 async function goWalk(p) {
-  const mapped = p.kind === 'route' || p.kind === 'spot';
-  if (mapped && sideView()) { startWalkAt(await sideWalkPlace(p)); return; }
   if (p.route && !p.route.map) {
     toast('Fetching the map around this route…');
     try {
@@ -701,13 +671,6 @@ async function goWalk(p) {
   }
   startWalkAt(walkPlace(p));
 }
-
-// Switching view restarts the walk from the same place.
-$('walk-view').addEventListener('change', (e) => {
-  prefs.set('mapview', e.target.value);
-  const saved = world?.walk?.place && places.find((x) => x.id === world.walk.place.id);
-  if (saved) goWalk(saved);
-});
 
 function renderPicker() {
   const list = [{ id: 'park', name: 'The park', builtIn: true }, ...places];
@@ -983,8 +946,6 @@ function renderPanel() {
     leash.setAttribute('aria-pressed', String(!world.walk.offLeash));
     $('walk-jog').setAttribute('aria-pressed', String(Boolean(world.owner.jog)));
     $('walk-look-wrap').hidden = !onMap();
-    $('walk-view-wrap').hidden = !places.some((x) => x.id === world.walk.place?.id && (x.kind === 'route' || x.kind === 'spot'));
-    if (document.activeElement !== $('walk-view')) $('walk-view').value = sideView() ? 'side' : 'above';
     if (document.activeElement !== $('walk-look')) $('walk-look').value = imageryOn() ? 'photo' : prefs.get('look', 'blocks') === 'drawn' ? 'drawn' : 'blocks';
     leash.textContent = world.walk.offLeash ? 'Leash off' : 'Leash on';
   }
