@@ -176,7 +176,7 @@ function buildChunk(blocks, chunk, buildingMat, groundMat) {
 
 // Fragments on the line between the camera and you are dropped, so a
 // building (or a tree) in the way shows a hole, not a wall.
-function seeThrough(material, cut) {
+function seeThrough(material, cut, screenDoor = false) {
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, cut);
     shader.vertexShader = shader.vertexShader
@@ -195,7 +195,12 @@ function seeThrough(material, cut) {
         vec3 ray = toPlayer / reach;
         vec3 fromCam = vWPos - uCam;
         float along = dot(fromCam, ray);
-        if (along > 0.0 && along < reach - 0.3 && length(fromCam - ray * along) < uRadius) discard;`);
+        if (along > 0.0 && along < reach - 0.3 && length(fromCam - ray * along) < uRadius) {
+          ${screenDoor
+            // Trees fade out in a checkerboard instead of being cut away, so they stay whole.
+            ? 'if (mod(floor(gl_FragCoord.x) + floor(gl_FragCoord.y), 2.0) < 1.0) discard;'
+            : 'discard;'}
+        }`);
   };
   return material;
 }
@@ -216,7 +221,7 @@ export class MapLayer {
     this.crownGeo = new THREE.IcosahedronGeometry(1, 1);
     this.trunkMat = new THREE.MeshLambertMaterial({ color: '#6e5038' });
     this.cut = { uCam: { value: new THREE.Vector3() }, uPlayer: { value: new THREE.Vector3() }, uRadius: { value: 3.5 } };
-    this.crownMat = seeThrough(new THREE.MeshLambertMaterial({ color: '#ffffff' }), this.cut);
+    this.crownMat = seeThrough(new THREE.MeshLambertMaterial({ color: '#ffffff' }), this.cut, true);
     this.buildingMat = seeThrough(new THREE.MeshLambertMaterial({ vertexColors: true }), this.cut);
     this.groundMat = new THREE.MeshLambertMaterial({ vertexColors: true });
   }
