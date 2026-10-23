@@ -57,13 +57,48 @@ function bench() {
   return g;
 }
 
+// A stick between two points.
+function strut(x1, y1, z1, x2, y2, z2, r, color, segments = 8) {
+  const from = new THREE.Vector3(x1, y1, z1);
+  const to = new THREE.Vector3(x2, y2, z2);
+  const len = from.distanceTo(to);
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, segments), mat(color));
+  m.position.copy(from).lerp(to, 0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), to.clone().sub(from).normalize());
+  m.castShadow = true;
+  return m;
+}
+
+function lathe(points, color, extra = {}, segments = 32) {
+  const m = new THREE.Mesh(
+    new THREE.LatheGeometry(points.map(([r, y]) => new THREE.Vector2(r, y)), segments),
+    mat(color, { side: THREE.DoubleSide, ...extra }),
+  );
+  m.castShadow = true;
+  m.receiveShadow = true;
+  return m;
+}
+
+// A tiered stone fountain: a basin with a rim and a step round it, two bowls
+// on a column, and a ring of jets arching into the water.
 function fountain() {
   const g = new THREE.Group();
-  g.add(cylinder(2.0, 2.1, 0.55, '#b9b7b0', 0, 0, 0, 28));
-  g.add(cylinder(1.75, 1.75, 0.03, '#6fb7e6', 0, 0.5, 0, 28, { transparent: true, opacity: 0.85 }));
-  g.add(cylinder(0.25, 0.35, 1.2, '#c9c7c0', 0, 0.4, 0, 12));
-  g.add(cylinder(0.7, 0.3, 0.2, '#c9c7c0', 0, 1.5, 0, 16));
-  g.add(cylinder(0.04, 0.04, 0.6, '#a9dcf5', 0, 1.7, 0, 6, { transparent: true, opacity: 0.8 }));
+  g.add(lathe([[0, 0], [1.75, 0], [1.75, 0.14], [0, 0.14]], '#a9a79f'));
+  g.add(lathe([[1.4, 0.1], [1.5, 0.1], [1.5, 0.55], [1.38, 0.55], [1.38, 0.1]], '#c7c5bd'));
+  g.add(lathe([[0, 0.1], [1.4, 0.1], [1.4, 0.45], [0, 0.45]], '#7fb7de', { transparent: true, opacity: 0.88 }));
+  g.add(cylinder(0.22, 0.3, 1.0, '#c7c5bd', 0, 0.1, 0, 14));
+  g.add(lathe([[0, 1.0], [0.75, 1.15], [0.8, 1.25], [0.7, 1.25], [0.0, 1.1]], '#c7c5bd'));
+  g.add(lathe([[0, 1.08], [0.62, 1.2], [0, 1.2]], '#8cc4e8', { transparent: true, opacity: 0.85 }));
+  g.add(cylinder(0.12, 0.18, 0.5, '#c7c5bd', 0, 1.15, 0, 10));
+  g.add(lathe([[0, 1.6], [0.35, 1.72], [0.38, 1.78], [0.3, 1.78], [0, 1.68]], '#c7c5bd'));
+  // Water arching from the top bowl and the middle one into the basin.
+  const water = { transparent: true, opacity: 0.55 };
+  g.add(cylinder(0.05, 0.1, 0.7, '#cfeaf8', 0, 1.7, 0, 8, water));
+  for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * Math.PI * 2;
+    g.add(strut(Math.cos(a) * 0.55, 1.15, Math.sin(a) * 0.55, Math.cos(a) * 1.15, 0.45, Math.sin(a) * 1.15, 0.025, '#cfeaf8', 6).clone());
+  }
+  for (const o of g.children) if (o.material?.color?.getHexString() === 'cfeaf8') o.material = mat('#cfeaf8', water);
   return g;
 }
 
@@ -74,29 +109,56 @@ function drinkingWater() {
   return g;
 }
 
+// A play area: a rubber pad with a swing set, a tower with a ladder and slide, and a sandpit.
 function playground() {
   const g = new THREE.Group();
-  // Swing frame.
-  for (const x of [-1.1, 1.1]) {
-    for (const z of [-0.5, 0.5]) {
-      const leg = cylinder(0.04, 0.04, 2.4, '#d6584a', x * 1.0 + z * 0.2, 0, z);
-      leg.rotation.z = -x * 0.08;
-      g.add(leg);
-    }
+  g.add(lathe([[0, 0], [4.6, 0], [4.6, 0.05], [0, 0.05]], '#c86f4f', {}, 40));
+
+  // Swing set: two A-frames, a top bar, two swings on chains.
+  const swings = new THREE.Group();
+  for (const x of [-1.3, 1.3]) {
+    swings.add(strut(x, 2.25, 0, x, 0, -0.8, 0.05, '#d6584a'));
+    swings.add(strut(x, 2.25, 0, x, 0, 0.8, 0.05, '#d6584a'));
   }
-  g.add(cylinder(0.05, 0.05, 2.5, '#d6584a', 0, 2.3, 0, 8).rotateZ(Math.PI / 2));
-  for (const x of [-0.5, 0.5]) g.add(box(0.4, 0.05, 0.2, '#2f6db5', x, 0.55));
+  swings.add(strut(-1.4, 2.25, 0, 1.4, 2.25, 0, 0.06, '#b8453a'));
+  for (const x of [-0.5, 0.5]) {
+    for (const dx of [-0.17, 0.17]) swings.add(strut(x + dx, 2.2, 0, x + dx, 0.5, 0, 0.012, '#4a4a4a', 4));
+    swings.add(box(0.4, 0.05, 0.2, '#2f6db5', x, 0.45));
+  }
+  swings.position.set(-1.2, 0, 0.6);
+  g.add(swings);
+
+  // Tower with a roof, a ladder at the back and a slide at the front.
+  const tower = new THREE.Group();
+  for (const x of [-0.6, 0.6]) for (const z of [-0.6, 0.6]) tower.add(box(0.1, 2.4, 0.1, '#3a9d5d', x - 0.05, 0, z - 0.05));
+  tower.add(box(1.4, 0.08, 1.4, '#8a6a3f', -0.7, 1.2, -0.7));
+  for (const x of [-0.6, 0.6]) tower.add(box(0.06, 0.4, 1.3, '#3a9d5d', x - 0.03, 1.28, -0.65));
+  tower.add(box(1.5, 0.06, 1.5, '#e0a82c', -0.75, 2.4, -0.75));
+  tower.add(strut(-0.6, 2.4, -0.6, 0, 2.7, 0, 0.03, '#e0a82c'));
+  tower.add(strut(0.6, 2.4, -0.6, 0, 2.7, 0, 0.03, '#e0a82c'));
+  tower.add(strut(-0.6, 2.4, 0.6, 0, 2.7, 0, 0.03, '#e0a82c'));
+  tower.add(strut(0.6, 2.4, 0.6, 0, 2.7, 0, 0.03, '#e0a82c'));
+  // Ladder.
+  for (const x of [-0.25, 0.25]) tower.add(strut(x, 1.2, -0.7, x, 0, -1.3, 0.03, '#b88a4a'));
+  for (let k = 1; k < 5; k++) tower.add(strut(-0.25, k * 0.24, -1.3 + (1 - k / 5) * 0.6, 0.25, k * 0.24, -1.3 + (1 - k / 5) * 0.6, 0.02, '#b88a4a', 6));
   // Slide.
   const slide = new THREE.Group();
-  const ramp = box(0.7, 0.06, 2.4, '#f2c13d');
-  ramp.rotation.x = 0.55;
-  ramp.position.set(0, 0.95, 0.9);
+  const ramp = box(0.7, 0.05, 2.5, '#f2c13d');
+  ramp.rotation.x = Math.atan2(1.2, 2.2);
+  ramp.position.set(0, 0.62, 0.0);
   slide.add(ramp);
-  slide.add(box(0.8, 1.7, 0.8, '#3a9d5d', 0, 0, -0.6));
-  slide.position.set(3, 0, 0);
-  g.add(slide);
-  // Soft ground under it.
-  g.add(cylinder(3.8, 3.8, 0.04, '#d98d5d', 1.5, 0, 0, 24));
+  for (const x of [-0.37, 0.37]) { const rail = box(0.05, 0.14, 2.5, '#d9a82a'); rail.rotation.x = ramp.rotation.x; rail.position.set(x, 0.7, 0.0); slide.add(rail); }
+  slide.position.set(0, 0, 1.95);
+  tower.add(slide);
+  tower.position.set(2.2, 0, -0.3);
+  g.add(tower);
+
+  // Sandpit.
+  const sand = new THREE.Group();
+  sand.add(box(1.6, 0.06, 1.6, '#e2cf96'));
+  for (const [w, d, x, z] of [[1.8, 0.1, 0, 0.85], [1.8, 0.1, 0, -0.85], [0.1, 1.6, 0.85, 0], [0.1, 1.6, -0.85, 0]]) sand.add(box(w, 0.2, d, '#8a6a3f', x, 0, z));
+  sand.position.set(-0.4, 0, -2.5);
+  g.add(sand);
   return g;
 }
 

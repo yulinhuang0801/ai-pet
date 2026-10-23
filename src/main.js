@@ -367,6 +367,38 @@ function releaseVelocity() {
 
 const CURSORS = { pet: 'grab', ball: 'grab', bag: 'grab', jar: 'grab', owner: 'pointer', floor: 'pointer', ground: 'pointer', wall: 'default' };
 
+// Two fingers on the 3D map: pinch to zoom, twist to turn the view. The second
+// finger takes over from a walk that the first one started.
+const fingers = new Map();
+let twoFingers = null;
+const pair = () => { const [a, b] = [...fingers.values()]; return { d: Math.hypot(b.x - a.x, b.y - a.y) || 1, a: Math.atan2(b.y - a.y, b.x - a.x) }; };
+scene.addEventListener('pointerdown', (e) => {
+  if (e.pointerType !== 'touch') return;
+  fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (fingers.size === 2 && map3D() && scene3d) {
+    twoFingers = pair();
+    if (pointer.mode === 'walk') world.walkToward(null);
+    pointer.mode = null;
+    e.stopImmediatePropagation();
+  }
+}, true);
+scene.addEventListener('pointermove', (e) => {
+  if (!fingers.has(e.pointerId)) return;
+  fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (!twoFingers || fingers.size !== 2) return;
+  const now = pair();
+  scene3d.zoomMap(now.d / twoFingers.d);
+  scene3d.turnMap(Math.atan2(Math.sin(now.a - twoFingers.a), Math.cos(now.a - twoFingers.a)));
+  twoFingers = now;
+  e.stopImmediatePropagation();
+}, true);
+for (const type of ['pointerup', 'pointercancel']) {
+  scene.addEventListener(type, (e) => {
+    fingers.delete(e.pointerId);
+    if (fingers.size < 2) twoFingers = null;
+  }, true);
+}
+
 scene.addEventListener('pointerdown', (e) => {
   if (!world) return;
   voice.unlock();
@@ -479,6 +511,8 @@ function openPhotoForm() {
 }
 
 $('walk-look').addEventListener('change', (e) => setLook(e.target.value));
+$('walk-turn-l').addEventListener('click', () => scene3d?.turnMap(-0.4));
+$('walk-turn-r').addEventListener('click', () => scene3d?.turnMap(0.4));
 $('map-photos').addEventListener('click', openPhotoForm);
 $('imagery-close').addEventListener('click', () => { $('imagery-form').hidden = true; });
 $('imagery-provider').value = prefs.get('imagery', null)?.provider ?? 'esri';
@@ -925,7 +959,9 @@ function escapeHtml(s) {
 
 function contextHint() {
   const w = world;
-  if (map3D(w)) return 'Walk with the arrow keys, or press where you want to go. Q and E turn the view, scroll to zoom. Press and hold your pet to give them a fuss.';
+  if (map3D(w)) return matchMedia('(pointer: coarse)').matches
+    ? 'Tap where you want to go. Pinch to zoom, twist or use the View buttons to turn. Press and hold your pet to give them a fuss.'
+    : 'Walk with the arrow keys, or press where you want to go. Q and E turn the view, scroll to zoom. Press and hold your pet to give them a fuss.';
   if (onMap(w)) return 'Walk with the arrow keys, or press where you want to go. Scroll to zoom. Press and hold your pet to give them a fuss.';
   if (w.scene === 'park') return 'Hold on either side of you, or the arrow keys, to walk. Press and hold your pet to give them a fuss.';
   if (w.drag?.item === 'scoop') return 'Hold the scoop over the bowl to pour. Let go when it looks like enough.';
@@ -968,6 +1004,7 @@ function renderPanel() {
     leash.setAttribute('aria-pressed', String(!world.walk.offLeash));
     $('walk-jog').setAttribute('aria-pressed', String(Boolean(world.owner.jog)));
     $('walk-look-wrap').hidden = !onMap();
+    $('walk-turn').hidden = !map3D();
     if (document.activeElement !== $('walk-look')) $('walk-look').value = imageryOn() ? 'photo' : ['drawn', '3d'].includes(prefs.get('look', 'blocks')) ? prefs.get('look') : 'blocks';
     leash.textContent = world.walk.offLeash ? 'Leash off' : 'Leash on';
   }

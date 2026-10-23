@@ -1053,8 +1053,8 @@ export class Scene3D {
       this.findSprite.scale.setScalar(0.45);
       this.findSprite.position.set(f.x / MU, 0.35 + Math.abs(Math.sin(world.time * 3)) * 0.12, f.y / MU);
     }
-    this.updateLeash(world, !world.walk.offLeash && this.pet && this.owner, LEASH / MU);
     this.loadingMap = Boolean(world.walk.area) && !world.walk.placed;
+    this.updateLeash(world, !world.walk.offLeash && !this.loadingMap && this.pet && this.owner, LEASH / MU);
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -1086,9 +1086,9 @@ export class Scene3D {
   drawMapOverlay(ctx, world) {
     ctx.clearRect(0, 0, VIEW_W, VIEW_H);
     if (this.loadingMap) {
-      ctx.font = '600 16px Figtree, system-ui, sans-serif';
+      ctx.font = '600 22px Figtree, system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(31, 42, 36, 0.75)';
+      ctx.fillStyle = 'rgba(31, 42, 36, 0.8)';
       ctx.fillText('Loading the map around you…', VIEW_W / 2, VIEW_H / 2);
       ctx.textAlign = 'left';
     }
