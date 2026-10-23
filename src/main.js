@@ -94,6 +94,9 @@ function use3D() { return Boolean(three) && prefs.get('view', '2d') === '3d'; }
 // Walking a real route, seen from above on its map (always in 2D).
 function onMap(w = world) { return Boolean(w?.walk?.track || w?.walk?.area); }
 
+// The 3D look for map walks: the same blocks, built as a world you walk through.
+function map3D(w = world) { return Boolean(three) && onMap(w) && prefs.get('look', 'blocks') === '3d'; }
+
 // Show the WebGL canvas under the 2D one, or hide it.
 function setStack(gl, on) {
   gl.hidden = !on;
@@ -108,6 +111,7 @@ function ensure3D() {
 
 function toWorld(canvas, e, w) {
   const r = canvas.getBoundingClientRect();
+  if (canvas === scene && map3D(w) && scene3d) return scene3d.pickMap(e.clientX, e.clientY);
   if (canvas === scene && onMap(w)) return mapToWorld(w, ((e.clientX - r.left) / r.width) * VIEW_W, ((e.clientY - r.top) / r.height) * VIEW_H);
   if (use3D() && scene3d && canvas === scene) return scene3d.pick(e.clientX, e.clientY);
   return {
@@ -415,7 +419,8 @@ scene.addEventListener('pointerup', endPointer);
 scene.addEventListener('wheel', (e) => {
   if (!onMap()) return;
   e.preventDefault();
-  zoomMap(e.deltaY > 0 ? 0.9 : 1.1);
+  if (map3D() && scene3d) scene3d.zoomMap(e.deltaY > 0 ? 0.9 : 1.1);
+  else zoomMap(e.deltaY > 0 ? 0.9 : 1.1);
 }, { passive: false });
 scene.addEventListener('pointercancel', endPointer);
 scene.addEventListener('lostpointercapture', endPointer);
@@ -544,6 +549,7 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     return;
   }
+  if (map3D() && scene3d && (k === 'q' || k === 'e')) { scene3d.turnMap(k === 'q' ? -0.3 : 0.3); walkByKeys(); return; }
   voice.unlock();
   if (k === 'f') world.feed();
   else if (k === 't') world.giveTreat();
@@ -566,6 +572,7 @@ function walkByKeys() {
   let y = 0;
   for (const k of held) { if (WALK_KEYS[k]) { x += WALK_KEYS[k][0]; y += WALK_KEYS[k][1]; } }
   // On a map you walk where the keys point, anywhere; side-on, left or right.
+  if (map3D() && scene3d) { const d = scene3d.mapDirection(x, y); world.steer(d.x, d.y); return; }
   if (onMap()) { world.steer(x, y); return; }
   world.setWalkInput(Math.sign(x));
 }
@@ -904,6 +911,7 @@ function escapeHtml(s) {
 
 function contextHint() {
   const w = world;
+  if (map3D(w)) return 'Walk with the arrow keys, or press where you want to go. Q and E turn the view, scroll to zoom. Press and hold your pet to give them a fuss.';
   if (onMap(w)) return 'Walk with the arrow keys, or press where you want to go. Scroll to zoom. Press and hold your pet to give them a fuss.';
   if (w.scene === 'park') return 'Hold on either side of you, or the arrow keys, to walk. Press and hold your pet to give them a fuss.';
   if (w.drag?.item === 'scoop') return 'Hold the scoop over the bowl to pour. Let go when it looks like enough.';
@@ -946,7 +954,7 @@ function renderPanel() {
     leash.setAttribute('aria-pressed', String(!world.walk.offLeash));
     $('walk-jog').setAttribute('aria-pressed', String(Boolean(world.owner.jog)));
     $('walk-look-wrap').hidden = !onMap();
-    if (document.activeElement !== $('walk-look')) $('walk-look').value = imageryOn() ? 'photo' : prefs.get('look', 'blocks') === 'drawn' ? 'drawn' : 'blocks';
+    if (document.activeElement !== $('walk-look')) $('walk-look').value = imageryOn() ? 'photo' : ['drawn', '3d'].includes(prefs.get('look', 'blocks')) ? prefs.get('look') : 'blocks';
     leash.textContent = world.walk.offLeash ? 'Leash off' : 'Leash on';
   }
   renderFinds();
@@ -1119,6 +1127,7 @@ $('reset-yes').addEventListener('click', () => {
 // --- Main loop ---
 
 let last = performance.now();
+let scene3dPet = null;
 let panelTimer = 0;
 let saveTimer = 0;
 
@@ -1151,8 +1160,16 @@ function frame(now) {
     const ctx = fitCanvas(scene);
     const opts = { date, dt: dt * speed, backdrops: backdrops(world), images: { treat: treatImage } };
     const mapped = onMap(world);
-    setStack($('scene3d'), solid && !mapped);
-    if (mapped) { if (ctx) drawMapWalk(ctx, world, opts); } else if (solid) {
+    const mapped3d = map3D(world);
+    if (mapped3d) {
+      ensure3D();
+      if (scene3dPet !== world.pet) { scene3dPet = world.pet; scene3d.setPet(world.pet); }
+    }
+    setStack($('scene3d'), (solid && !mapped) || mapped3d);
+    if (mapped3d) {
+      scene3d.renderMap(world, opts);
+      if (ctx) scene3d.drawMapOverlay(ctx, world);
+    } else if (mapped) { if (ctx) drawMapWalk(ctx, world, opts); } else if (solid) {
       scene3d.render(world, opts);
       if (ctx) scene3d.drawOverlay(ctx, world);
     } else if (ctx) render(ctx, world, opts);

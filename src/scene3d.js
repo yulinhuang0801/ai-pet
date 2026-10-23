@@ -11,6 +11,8 @@ import { VIEW_W, VIEW_H, GROUND, BOWL_X, BED_X, BAG_X, JAR_X, LEASH } from './sp
 import { darkness, skyColors, drawBubble, drawHeart } from './renderer.js';
 import { drawFind } from './finds-art.js';
 import { portionGrams } from './pet.js';
+import { MAP_UNITS_PER_METER as MU } from './space-map.js';
+import { MapLayer } from './scene3d-map.js';
 
 // Metres per simulation unit. The owner (300 units tall) comes out at 1.7 m.
 export const U = 0.0057;
@@ -196,6 +198,13 @@ class Character {
     this.touched.clear();
   }
 
+  // Face along a heading on the map: an angle where 0 is east and a quarter turn is south.
+  faceHeading(heading, dt) {
+    const d = Math.atan2(Math.sin(Math.PI / 2 - heading - this.yaw), Math.cos(Math.PI / 2 - heading - this.yaw));
+    this.yaw += d * (1 - Math.exp(-dt * 10));
+    this.turn.rotation.y = this.yaw;
+  }
+
   face(dir, dt) {
     // Three-quarter view: turned toward the camera rather than fully side on.
     const target = dir * (Math.PI / 2 - 0.5);
@@ -240,8 +249,13 @@ class PetModel extends Character {
   update(dt, w) {
     const b = w.body;
     const p = b.pose;
-    this.root.position.set(X(b.x), b.jump * U, Z_PET);
-    this.face(b.dir, dt);
+    if (w.walk?.blocks) {
+      this.root.position.set(b.x / MU, b.jump * U, b.y / MU);
+      this.faceHeading(b.heading ?? 0, dt);
+    } else {
+      this.root.position.set(X(b.x), b.jump * U, Z_PET);
+      this.face(b.dir, dt);
+    }
 
     if (this.species === 'cat') this.updateCat(dt, b);
     else this.updateDog(dt, b, w);
@@ -440,8 +454,13 @@ class OwnerModel extends Character {
 
   update(dt, w, events) {
     const o = w.owner;
-    this.root.position.set(X(o.x), 0, Z_OWNER);
-    this.face(o.dir, dt);
+    if (w.walk?.blocks) {
+      this.root.position.set(o.x / MU, 0, o.y / MU);
+      this.faceHeading(o.heading ?? 0, dt);
+    } else {
+      this.root.position.set(X(o.x), 0, Z_OWNER);
+      this.face(o.dir, dt);
+    }
     if (events.throw) this.playOnce('Throw', 1.4);
     else if (events.pickUp) this.playOnce('PickUp', 1.5);
     else if (events.wave) this.playOnce('Waving', 1.2);
@@ -496,6 +515,11 @@ export class Scene3D {
     this.scene.add(this.home, this.park);
     this.buildItems();
     this.findTextures = {};
+    // The block world for map walks (see renderMap).
+    this.mapLayer = new MapLayer();
+    this.mapLayer.group.visible = false;
+    this.scene.add(this.mapLayer.group);
+    this.mapCam = { x: 0, z: 0, yaw: 0, dist: 13, ready: false };
   }
 
   buildLights() {
@@ -904,6 +928,12 @@ export class Scene3D {
     this.updateSky(dark);
     this.home.visible = home;
     this.park.visible = !home;
+    this.mapLayer.group.visible = false;
+    if (this.pet && this.owner) this.pet.root.visible = this.owner.root.visible = true;
+    this.scene.fog = null;
+    this.setShadowArea('room');
+    if (this.camera.fov !== 36) Object.assign(this.camera, { fov: 36, near: 0.1, far: 200 });
+    this.camera.updateProjectionMatrix();
     this.lamp.visible = home;
 
     // Camera: fixed on the room; follows the owner on walks.
@@ -945,6 +975,126 @@ export class Scene3D {
     }
     this.placeItems(world, images);
     this.renderer.render(this.scene, this.camera);
+  }
+
+  // The room and the map walk light and shadow different areas.
+  setShadowArea(kind) {
+    if (this.shadowArea === kind) return;
+    this.shadowArea = kind;
+    const cam = this.sun.shadow.camera;
+    if (kind === 'map') Object.assign(cam, { left: -18, right: 18, top: 18, bottom: -18, near: 1, far: 140 });
+    else Object.assign(cam, { left: -6, right: 6, top: 4, bottom: -2, near: 1, far: 20 });
+    cam.updateProjectionMatrix();
+  }
+
+  // A map walk: the block world around you, with the camera behind and above.
+  renderMap(world, { date = new Date(), dt = 1 / 60 } = {}) {
+    this.resize();
+    const dark = darkness(date);
+    this.updateSky(dark);
+    this.home.visible = false;
+    this.park.visible = false;
+    this.lamp.visible = false;
+    for (const v of [this.ball, this.scoop, this.treatSprite, this.floorTreat, this.giftSprite]) v.visible = false;
+    this.scene.background = this.skyBg;
+    this.scene.fog = new THREE.Fog(skyColors(dark)[1], 70, 190);
+    this.setShadowArea('map');
+
+    const o = world.owner;
+    const cam = this.mapCam;
+    const tx = o.x / MU;
+    const tz = o.y / MU;
+    if (this.mapLayer.blocks !== world.walk.blocks) cam.ready = false;
+    if (!cam.ready) { cam.x = tx; cam.z = tz; cam.ready = true; }
+    const k = 1 - Math.exp(-Math.min(dt, 0.1) * 4);
+    cam.x += (tx - cam.x) * k;
+    cam.z += (tz - cam.z) * k;
+    this.mapLayer.group.visible = true;
+    this.mapLayer.sync(world.walk.blocks, tx, tz);
+
+    const pitch = 1.0;
+    this.camera.fov = 45;
+    this.camera.aspect = VIEW_W / VIEW_H;
+    this.camera.near = 0.2;
+    this.camera.far = 400;
+    this.camera.updateProjectionMatrix();
+    this.camera.position.set(
+      cam.x + Math.sin(cam.yaw) * Math.cos(pitch) * cam.dist,
+      0.9 + Math.sin(pitch) * cam.dist,
+      cam.z + Math.cos(cam.yaw) * Math.cos(pitch) * cam.dist,
+    );
+    this.camera.lookAt(cam.x, 0.9, cam.z);
+    this.mapLayer.focus(this.camera.position, new THREE.Vector3(tx, 1, tz));
+    this.sun.position.set(cam.x + 18, 32, cam.z + 12);
+    this.sun.target.position.set(cam.x, 0, cam.z);
+    this.hemi.intensity = 1.25 - dark * 0.85;
+
+    if (this.pet && this.owner) {
+      // Until the map under you has loaded, there's nowhere to stand.
+      const waiting = Boolean(world.walk.area) && !world.walk.placed;
+      this.pet.root.visible = this.owner.root.visible = !waiting;
+      this.applyLooks(world);
+      this.owner.update(dt, world, this.events(world));
+      this.pet.update(dt, world);
+    }
+    const f = world.walk.find;
+    this.findSprite.visible = Boolean(f);
+    if (f) {
+      this.findSprite.material.map = this.findTexture(f.item.id);
+      this.findSprite.scale.setScalar(0.45);
+      this.findSprite.position.set(f.x / MU, 0.35 + Math.abs(Math.sin(world.time * 3)) * 0.12, f.y / MU);
+    }
+    this.updateLeash(world, !world.walk.offLeash && this.pet && this.owner, LEASH / MU);
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  // A press on the map view: the spot on the ground (in map units), and whether it's on the pet or you.
+  pickMap(clientX, clientY) {
+    const r = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const hit = new THREE.Vector3();
+    this.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.2), hit);
+    const onPet = this.pet ? this.raycaster.intersectObject(this.pet.model, true).length > 0 : false;
+    const onOwner = this.owner ? this.raycaster.intersectObject(this.owner.model, true).length > 0 : false;
+    return { x: hit.x * MU, y: hit.z * MU, onPet, onOwner };
+  }
+
+  zoomMap(factor) { this.mapCam.dist = Math.min(24, Math.max(3.5, this.mapCam.dist / factor)); }
+
+  turnMap(angle) { this.mapCam.yaw += angle; }
+
+  // Which way the arrow keys go on the map, given how the camera is turned:
+  // up is away from the camera. Takes x (right) and y (down) as keys give them.
+  mapDirection(x, y) {
+    const c = Math.cos(this.mapCam.yaw);
+    const s = Math.sin(this.mapCam.yaw);
+    return { x: x * c + y * s, y: -x * s + y * c };
+  }
+
+  // Speech bubbles and little effects over the map view.
+  drawMapOverlay(ctx, world) {
+    ctx.clearRect(0, 0, VIEW_W, VIEW_H);
+    if (!this.pet || !this.owner) return;
+    const head = this.project(this.pet.headWorld(new THREE.Vector3()));
+    for (const p of world.particles) {
+      const a = 1 - p.age / p.life;
+      const sx = head.x + (p.x % 7) - 3;
+      const sy = head.y - 8 - p.age * 26;
+      if (p.type === 'heart') {
+        ctx.fillStyle = `rgba(232, 86, 120, ${a})`;
+        drawHeart(ctx, sx, sy, 9);
+      } else if (p.type === 'z') {
+        ctx.fillStyle = `rgba(70, 80, 120, ${a})`;
+        ctx.font = `700 ${14 + p.age * 6}px Grandstander, system-ui, sans-serif`;
+        ctx.fillText('z', sx + p.age * 10, sy);
+      }
+    }
+    if (world.bubble) drawBubble(ctx, world.bubble.text, head.x, head.y - 18, 'pet');
+    if (world.owner.bubble) {
+      const oh = this.project(this.owner.headWorld(new THREE.Vector3()));
+      drawBubble(ctx, world.owner.bubble.text, oh.x, oh.y - 6, 'owner');
+    }
   }
 
   layoutPark(world, camX, photo) {
@@ -1012,6 +1162,7 @@ export class Scene3D {
     this.findSprite.visible = Boolean(f);
     if (f) {
       this.findSprite.material.map = this.findTexture(f.item.id);
+      this.findSprite.scale.setScalar(0.13);
       at(this.findSprite, f.x, GROUND - 10 - Math.abs(Math.sin(world.time * 3)) * 6, Z_PET);
     }
     const g = home && world.shownGift;
@@ -1021,13 +1172,16 @@ export class Scene3D {
       at(this.giftSprite, g.x, GROUND - 10, Z_PET + 0.1);
     }
 
-    // Leash: sags when slack, straight when tight.
-    const leashed = !home && !world.walk.offLeash && this.pet && this.owner;
+    this.updateLeash(world, !home && !world.walk.offLeash && this.pet && this.owner, LEASH * U);
+  }
+
+  // Leash: sags when slack, straight when tight. `length` is how long it is, in metres.
+  updateLeash(world, leashed, length) {
     this.leash.visible = Boolean(leashed);
     if (leashed) {
       const a = this.owner.handWorld(new THREE.Vector3());
       const b = this.pet.neckWorld(new THREE.Vector3());
-      const sag = (1 - world.walk.tension) * Math.max(0, LEASH * U * 1.1 - a.distanceTo(b)) * 0.8 + 0.02;
+      const sag = (1 - world.walk.tension) * Math.max(0, length * 1.1 - a.distanceTo(b)) * 0.8 + 0.02;
       const mid = a.clone().lerp(b, 0.5).add(new THREE.Vector3(0, -sag, 0));
       const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
       this.leash.geometry.dispose();
