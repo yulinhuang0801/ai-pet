@@ -140,6 +140,13 @@
       </div>
       <div class="actions" role="toolbar" aria-label="Walking" id="walk-actions" hidden>
         <button type="button" id="walk-jog" class="ghost" aria-pressed="false">Jog</button>
+        <label class="walk-look" id="walk-view-wrap" hidden>
+          <span class="sr-only">Walk view</span>
+          <select id="walk-view">
+            <option value="side">Side view</option>
+            <option value="above">From above</option>
+          </select>
+        </label>
         <label class="walk-look" id="walk-look-wrap" hidden>
           <span class="sr-only">Map look</span>
           <select id="walk-look">
