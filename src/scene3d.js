@@ -520,6 +520,8 @@ export class Scene3D {
     this.mapLayer.group.visible = false;
     this.scene.add(this.mapLayer.group);
     this.mapCam = { x: 0, z: 0, yaw: 0, dist: 13, ready: false };
+    // Pets are drawn bigger than life on map walks, so they read next to streets and houses.
+    this.petBoost = 1;
   }
 
   buildLights() {
@@ -821,10 +823,10 @@ export class Scene3D {
 
   applyLooks(world) {
     const look = world.pet.look;
-    const key = JSON.stringify([look, world.pet.owner, world.scale]);
+    const key = JSON.stringify([look, world.pet.owner, world.scale, this.petBoost]);
     if (key === this.lookKey || !this.pet || !this.owner) return;
     this.lookKey = key;
-    this.pet.fit((world.pet.species === 'cat' ? 0.4 : 0.52) * world.scale);
+    this.pet.fit((world.pet.species === 'cat' ? 0.4 : 0.52) * world.scale * this.petBoost);
     this.pet._baseY = undefined;
     this.pet.setLook(look);
     this.owner.setLook(world.pet.owner);
@@ -932,6 +934,7 @@ export class Scene3D {
     if (this.pet && this.owner) this.pet.root.visible = this.owner.root.visible = true;
     this.scene.fog = null;
     this.setShadowArea('room');
+    this.petBoost = 1;
     if (this.camera.fov !== 36) Object.assign(this.camera, { fov: 36, near: 0.1, far: 200 });
     this.camera.updateProjectionMatrix();
     this.lamp.visible = home;
@@ -1003,6 +1006,7 @@ export class Scene3D {
     this.scene.background = this.skyBg;
     this.scene.fog = new THREE.Fog(skyColors(dark)[1], 70, 190);
     this.setShadowArea('map');
+    this.petBoost = 1.55;
 
     const o = world.owner;
     const cam = this.mapCam;
@@ -1015,6 +1019,7 @@ export class Scene3D {
     cam.z += (tz - cam.z) * k;
     this.mapLayer.group.visible = true;
     this.mapLayer.sync(world.walk.blocks, tx, tz, world.walk.area?.landmarks ?? world.walk.route?.landmarks ?? []);
+    this.mapLayer.setRoute(world.walk.route);
 
     const pitch = 1.0;
     this.camera.fov = 45;
@@ -1049,6 +1054,7 @@ export class Scene3D {
       this.findSprite.position.set(f.x / MU, 0.35 + Math.abs(Math.sin(world.time * 3)) * 0.12, f.y / MU);
     }
     this.updateLeash(world, !world.walk.offLeash && this.pet && this.owner, LEASH / MU);
+    this.loadingMap = Boolean(world.walk.area) && !world.walk.placed;
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -1079,6 +1085,13 @@ export class Scene3D {
   // Speech bubbles and little effects over the map view.
   drawMapOverlay(ctx, world) {
     ctx.clearRect(0, 0, VIEW_W, VIEW_H);
+    if (this.loadingMap) {
+      ctx.font = '600 16px Figtree, system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(31, 42, 36, 0.75)';
+      ctx.fillText('Loading the map around you…', VIEW_W / 2, VIEW_H / 2);
+      ctx.textAlign = 'left';
+    }
     if (!this.pet || !this.owner) return;
     const head = this.project(this.pet.headWorld(new THREE.Vector3()));
     for (const p of world.particles) {

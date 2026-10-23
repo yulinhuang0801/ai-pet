@@ -145,6 +145,16 @@ function iceCream() {
   return g;
 }
 
+// The start or finish of a walk along a saved route.
+export function routePost(text, finish) {
+  const g = new THREE.Group();
+  g.add(cylinder(0.05, 0.05, 2.6, '#3d3a36'));
+  g.add(box(0.9, 0.5, 0.04, finish ? '#1f2a24' : '#1d6d64', 0.47, 2.0));
+  if (finish) for (let r = 0; r < 2; r++) for (let c = 0; c < 4; c++) if ((r + c) % 2) g.add(box(0.225, 0.25, 0.05, '#f4f7f4', 0.14 + c * 0.225, 2.0 + r * 0.25));
+  g.add(label(text, 3.1, finish ? '#1f2a24' : '#1d6d64'));
+  return g;
+}
+
 const SIGN_HEIGHT = { dog_park: 2.9, playground: 3.0, fountain: 3.0, cafe: 2.8, restaurant: 2.8, ice_cream: 2.6, shop: 2.9 };
 const SIGN_COLOUR = { dog_park: '#8a5a32', playground: '#d6584a', fountain: '#2f6db5', cafe: '#8a5a32', restaurant: '#a33a3a', ice_cream: '#d6629a', shop: '#1d6d64' };
 

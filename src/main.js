@@ -103,6 +103,13 @@ function setStack(gl, on) {
   gl.parentElement.classList.toggle('three', on);
 }
 
+// Get the 3D models downloading before a 3D map walk needs them.
+function warm3D() {
+  if (!three || !world || prefs.get('look', 'blocks') !== '3d') return;
+  ensure3D();
+  scene3d.setPet(world.pet);
+}
+
 function ensure3D() {
   if (!three) return;
   scene3d ??= new three.Scene3D($('scene3d'));
@@ -435,6 +442,7 @@ function setLook(id) {
   setImagery(null);
   setBlockLook(id !== 'drawn');
   prefs.set('look', id);
+  warm3D();
   if (world) renderPanel();
 }
 setBlockLook(prefs.get('look', 'blocks') !== 'drawn');
@@ -732,6 +740,12 @@ const planner = new MapPlanner({
   name: $('map-name'), save: $('map-save'),
 }, {
   toast,
+  // Start fetching the map under the pin, so it's there by the time you press Start.
+  onPin: (at) => {
+    const d = 0.002;
+    mapArea([at[0] - d, at[1] - d, at[0] + d, at[1] + d]).catch(() => {});
+    warm3D();
+  },
   // A pinned spot is kept as a place, so you can walk there again.
   onStart: async ({ name, at }) => {
     const record = { id: `s${Date.now().toString(36)}`, name, kind: 'spot', at, added: Date.now() };
@@ -1206,6 +1220,7 @@ threeReady.then(() => {
   const saved = storage.load();
   if (saved) startGame(saved, catchUp(saved));
   else openCreator();
+  warm3D();
 });
 loadPlaces();
 loadAssets();

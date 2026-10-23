@@ -8,7 +8,7 @@
 
 import * as THREE from '../vendor/three/three.module.min.js';
 import { CHUNK, B, nearestOpen } from './blocks.js';
-import { buildLandmark } from './props3d.js';
+import { buildLandmark, routePost } from './props3d.js';
 import { landmarkName } from './route-art.js';
 
 const rgb = (r, g, b) => [r / 255, g / 255, b / 255];
@@ -207,6 +207,7 @@ export class MapLayer {
     this.blocks = null;
     this.treeCount = -1;
     this.treeMeshes = [];
+    this.routeOf = null;
     this.landmarks = new Map();
     this.coneGeo = new THREE.ConeGeometry(1, 1, 8);
     const trunk = new THREE.CylinderGeometry(0.12, 0.18, 1, 6);
@@ -221,11 +222,14 @@ export class MapLayer {
   }
 
   // Build up to `budget` chunks that don't have a mesh yet, nearest to (x, z) first.
-  sync(blocks, x, z, landmarks = [], budget = 3) {
+  // Builds chunks nearest first, for a few milliseconds a frame, at least one.
+  sync(blocks, x, z, landmarks = [], ms = 5) {
     if (this.blocks !== blocks) this.reset(blocks);
     const todo = blocks.chunks.filter((c) => !this.chunks.has(c));
     todo.sort((a, b) => Math.hypot((a.ci + 0.5) * CHUNK - x, (a.cj + 0.5) * CHUNK - z) - Math.hypot((b.ci + 0.5) * CHUNK - x, (b.cj + 0.5) * CHUNK - z));
-    for (const c of todo.slice(0, budget)) {
+    const started = performance.now();
+    for (const c of todo) {
+      if (this.chunks.size && performance.now() - started > ms) break;
       const mesh = buildChunk(blocks, c, this.buildingMat, this.groundMat);
       this.chunks.set(c, mesh);
       this.group.add(mesh);
@@ -246,8 +250,39 @@ export class MapLayer {
     this.clearTrees();
     for (const g of this.landmarks.values()) this.group.remove(g);
     this.landmarks.clear();
+    this.setRoute(null);
     this.blocks = blocks;
     this.treeCount = -1;
+  }
+
+  // A saved route: a teal ribbon laid along it, with a Start post and a Finish post.
+  setRoute(route) {
+    if (this.routeOf === route) return;
+    this.routeOf = route;
+    if (this.routeGroup) { this.group.remove(this.routeGroup); this.routeGroup.traverse((o) => o.geometry?.dispose()); this.routeGroup = null; }
+    const line = route?.line;
+    if (!line || line.length < 4) return;
+    const m = new Mesher();
+    const y = 0.15;
+    const half = 0.4;
+    for (let a = 2; a < line.length; a += 2) {
+      const [ax, az, bx, bz] = [line[a - 2], line[a - 1], line[a], line[a + 1]];
+      const len = Math.hypot(bx - ax, bz - az);
+      if (!len) continue;
+      const nx = (-(bz - az) / len) * half;
+      const nz = ((bx - ax) / len) * half;
+      m.quad([ax - nx, y, az - nz], [bx - nx, y, bz - nz], [bx + nx, y, bz + nz], [ax + nx, y, az + nz], [0, 1, 0], rgb(40, 170, 156));
+    }
+    const ribbon = new THREE.Mesh(m.geometry(), new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide }));
+    ribbon.renderOrder = 2;
+    this.routeGroup = new THREE.Group();
+    this.routeGroup.add(ribbon);
+    const start = routePost('Start', false);
+    start.position.set(line[0], 0, line[1]);
+    const finish = routePost('Finish', true);
+    finish.position.set(line[line.length - 2], 0, line[line.length - 1]);
+    this.routeGroup.add(start, finish);
+    this.group.add(this.routeGroup);
   }
 
   clearTrees() {
