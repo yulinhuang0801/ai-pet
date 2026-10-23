@@ -95,6 +95,7 @@ function use3D() { return Boolean(three) && prefs.get('view', '2d') === '3d'; }
 function onMap(w = world) { return Boolean(w?.walk?.track || w?.walk?.area); }
 
 // The 3D look for map walks: the same blocks, built as a world you walk through.
+const MAP3D_SPEED = 2.2;
 function map3D(w = world) { return Boolean(three) && onMap(w) && prefs.get('look', 'blocks') === '3d'; }
 
 // Show the WebGL canvas under the 2D one, or hide it.
@@ -367,11 +368,33 @@ function releaseVelocity() {
 
 const CURSORS = { pet: 'grab', ball: 'grab', bag: 'grab', jar: 'grab', owner: 'pointer', floor: 'pointer', ground: 'pointer', wall: 'default' };
 
+// On the 3D map, dragging with the right mouse button looks around.
+let orbit = null;
+scene.addEventListener('contextmenu', (e) => { if (map3D()) e.preventDefault(); });
+scene.addEventListener('pointerdown', (e) => {
+  if (e.button !== 2 || !map3D() || !scene3d) return;
+  orbit = { id: e.pointerId, x: e.clientX, y: e.clientY };
+  scene.setPointerCapture(e.pointerId);
+  e.stopImmediatePropagation();
+}, true);
+scene.addEventListener('pointermove', (e) => {
+  if (orbit?.id !== e.pointerId) return;
+  scene3d.turnMap((e.clientX - orbit.x) * 0.008);
+  scene3d.tiltMap((e.clientY - orbit.y) * 0.006);
+  orbit.x = e.clientX;
+  orbit.y = e.clientY;
+  renderPanel();
+  e.stopImmediatePropagation();
+}, true);
+for (const type of ['pointerup', 'pointercancel']) {
+  scene.addEventListener(type, (e) => { if (orbit?.id === e.pointerId) { orbit = null; e.stopImmediatePropagation(); } }, true);
+}
+
 // Two fingers on the 3D map: pinch to zoom, twist to turn the view. The second
 // finger takes over from a walk that the first one started.
 const fingers = new Map();
 let twoFingers = null;
-const pair = () => { const [a, b] = [...fingers.values()]; return { d: Math.hypot(b.x - a.x, b.y - a.y) || 1, a: Math.atan2(b.y - a.y, b.x - a.x) }; };
+const pair = () => { const [a, b] = [...fingers.values()]; return { d: Math.hypot(b.x - a.x, b.y - a.y) || 1, a: Math.atan2(b.y - a.y, b.x - a.x), my: (a.y + b.y) / 2 }; };
 scene.addEventListener('pointerdown', (e) => {
   if (e.pointerType !== 'touch') return;
   fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -389,6 +412,7 @@ scene.addEventListener('pointermove', (e) => {
   const now = pair();
   scene3d.zoomMap(now.d / twoFingers.d);
   scene3d.turnMap(Math.atan2(Math.sin(now.a - twoFingers.a), Math.cos(now.a - twoFingers.a)));
+  scene3d.tiltMap((now.my - twoFingers.my) * 0.006);
   twoFingers = now;
   e.stopImmediatePropagation();
 }, true);
@@ -511,6 +535,7 @@ function openPhotoForm() {
 }
 
 $('walk-look').addEventListener('change', (e) => setLook(e.target.value));
+$('walk-tilt').addEventListener('click', () => { scene3d?.toggleSideView(); renderPanel(); });
 $('walk-turn-l').addEventListener('click', () => scene3d?.turnMap(-0.4));
 $('walk-turn-r').addEventListener('click', () => scene3d?.turnMap(0.4));
 $('map-photos').addEventListener('click', openPhotoForm);
@@ -591,7 +616,13 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     return;
   }
-  if (map3D() && scene3d && (k === 'q' || k === 'e')) { scene3d.turnMap(k === 'q' ? -0.3 : 0.3); walkByKeys(); return; }
+  if (map3D() && scene3d && 'qerf'.includes(k) && k.length === 1) {
+    if (k === 'q' || k === 'e') scene3d.turnMap(k === 'q' ? -0.3 : 0.3);
+    else scene3d.tiltMap(k === 'r' ? 0.15 : -0.15);
+    renderPanel();
+    walkByKeys();
+    return;
+  }
   voice.unlock();
   if (k === 'f') world.feed();
   else if (k === 't') world.giveTreat();
@@ -960,8 +991,8 @@ function escapeHtml(s) {
 function contextHint() {
   const w = world;
   if (map3D(w)) return matchMedia('(pointer: coarse)').matches
-    ? 'Tap where you want to go. Pinch to zoom, twist or use the View buttons to turn. Press and hold your pet to give them a fuss.'
-    : 'Walk with the arrow keys, or press where you want to go. Q and E turn the view, scroll to zoom. Press and hold your pet to give them a fuss.';
+    ? 'Tap where you want to go. Pinch to zoom, twist to turn, drag two fingers up or down to tilt. Press and hold your pet to give them a fuss.'
+    : 'Walk with the arrow keys, or press where you want to go. Q and E turn the view, R and F tilt it, drag with the right button to look around, scroll to zoom.';
   if (onMap(w)) return 'Walk with the arrow keys, or press where you want to go. Scroll to zoom. Press and hold your pet to give them a fuss.';
   if (w.scene === 'park') return 'Hold on either side of you, or the arrow keys, to walk. Press and hold your pet to give them a fuss.';
   if (w.drag?.item === 'scoop') return 'Hold the scoop over the bowl to pour. Let go when it looks like enough.';
@@ -1005,6 +1036,7 @@ function renderPanel() {
     $('walk-jog').setAttribute('aria-pressed', String(Boolean(world.owner.jog)));
     $('walk-look-wrap').hidden = !onMap();
     $('walk-turn').hidden = !map3D();
+    if (scene3d) $('walk-tilt').textContent = scene3d.sideView ? 'Bird’s eye' : 'Side view';
     if (document.activeElement !== $('walk-look')) $('walk-look').value = imageryOn() ? 'photo' : ['drawn', '3d'].includes(prefs.get('look', 'blocks')) ? prefs.get('look') : 'blocks';
     leash.textContent = world.walk.offLeash ? 'Leash off' : 'Leash on';
   }
@@ -1212,6 +1244,8 @@ function frame(now) {
     const opts = { date, dt: dt * speed, backdrops: backdrops(world), images: { treat: treatImage } };
     const mapped = onMap(world);
     const mapped3d = map3D(world);
+    // Streets are drawn at a larger scale in 3D, so a walk is quicker there.
+    world.speedScale = mapped3d ? MAP3D_SPEED : 1;
     if (mapped3d) {
       ensure3D();
       if (scene3dPet !== world.pet) { scene3dPet = world.pet; scene3d.setPet(world.pet); }

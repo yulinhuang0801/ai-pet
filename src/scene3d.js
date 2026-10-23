@@ -273,10 +273,15 @@ class PetModel extends Character {
       this.idleSwap = 5 + Math.random() * 6;
       this.idleName = this.idleName === 'Idle' ? 'Idle_2' : 'Idle';
     }
+    // Map walks can be sped up; the gait is chosen by speed as it would be at normal pace,
+    // with the legs moving a little quicker.
+    const k = w.speedScale ?? 1;
+    const sp = b.speed / k;
+    const faster = 1 + (k - 1) * 0.5;
     let state;
     if (b.jump > 4) state = ['Gallop_Jump', { timeScale: 1.2 }];
-    else if (b.speed > 150) state = ['Gallop', { timeScale: Math.min(1.6, b.speed / 200) }];
-    else if (b.speed > 8) state = ['Walk', { timeScale: Math.min(1.9, Math.max(0.6, b.speed / 70)) }];
+    else if (sp > 150) state = ['Gallop', { timeScale: Math.min(1.6, sp / 200) * faster }];
+    else if (b.speed > 8) state = ['Walk', { timeScale: Math.min(1.9, Math.max(0.6, sp / 70)) * faster }];
     else if (p.lie > 0.5) state = ['Death', { once: true, timeScale: 0.6, fade: 0.4 }]; // flops onto its side
     else if (p.chew > 0.5 && p.head > 0.5) state = ['Eating', {}];
     else if (p.head > 0.55) state = ['Idle_2_HeadLow', {}];
@@ -470,7 +475,8 @@ class OwnerModel extends Character {
       const d = w.drag;
       const still = o.speed < 5 && !d && !w.petting && w.scene === 'home';
       this.idleTime = still ? this.idleTime + dt : 0;
-      if (o.speed > 5) this.play('Walking_A', { timeScale: Math.min(1.6, o.speed / 90) });
+      const k = w.speedScale ?? 1;
+      if (o.speed > 5) this.play('Walking_A', { timeScale: Math.min(1.6, o.speed / k / 90) * (1 + (k - 1) * 0.5) });
       else if (w.petting) this.play(w.petting.y > GROUND - 120 ? 'Crouching' : 'Interact', {});
       else if (d?.item === 'scoop') this.play('Use_Item', {});
       else if (d) this.play('Interact', { timeScale: 0.5 });
@@ -492,6 +498,10 @@ class OwnerModel extends Character {
 }
 
 // --- The 3D scene ---
+
+// Two camera presets for map walks: from above, and low behind you.
+const BIRDS_EYE = { pitch: 1.0, dist: 13 };
+const SIDE_VIEW = { pitch: 0.2, dist: 6.5 };
 
 export class Scene3D {
   constructor(canvas) {
@@ -519,7 +529,7 @@ export class Scene3D {
     this.mapLayer = new MapLayer();
     this.mapLayer.group.visible = false;
     this.scene.add(this.mapLayer.group);
-    this.mapCam = { x: 0, z: 0, yaw: 0, dist: 13, ready: false };
+    this.mapCam = { x: 0, z: 0, yaw: 0, pitch: BIRDS_EYE.pitch, dist: BIRDS_EYE.dist, ready: false };
     // Pets are drawn bigger than life on map walks, so they read next to streets and houses.
     this.petBoost = 1;
   }
@@ -1021,7 +1031,7 @@ export class Scene3D {
     this.mapLayer.sync(world.walk.blocks, tx, tz, world.walk.area?.landmarks ?? world.walk.route?.landmarks ?? []);
     this.mapLayer.setRoute(world.walk.route);
 
-    const pitch = 1.0;
+    const pitch = cam.pitch;
     this.camera.fov = 45;
     this.camera.aspect = VIEW_W / VIEW_H;
     this.camera.near = 0.2;
@@ -1073,6 +1083,20 @@ export class Scene3D {
   zoomMap(factor) { this.mapCam.dist = Math.min(24, Math.max(3.5, this.mapCam.dist / factor)); }
 
   turnMap(angle) { this.mapCam.yaw += angle; }
+
+  // Tilt the view: up lifts the camera toward a bird's eye view, down brings it
+  // near the ground for a view from the side.
+  tiltMap(angle) { this.mapCam.pitch = Math.min(1.4, Math.max(0.08, this.mapCam.pitch + angle)); }
+
+  // Switch between looking along the street at ground level and from above.
+  toggleSideView() {
+    const c = this.mapCam;
+    const next = c.pitch > 0.6 ? SIDE_VIEW : BIRDS_EYE;
+    c.pitch = next.pitch;
+    c.dist = next.dist;
+  }
+
+  get sideView() { return this.mapCam.pitch <= 0.6; }
 
   // Which way the arrow keys go on the map, given how the camera is turned:
   // up is away from the camera. Takes x (right) and y (down) as keys give them.

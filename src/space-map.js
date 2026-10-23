@@ -119,7 +119,8 @@ export const mapSpace = {
     const dy = t.y - b.y;
     const dist = Math.hypot(dx, dy);
     if (dist < 6) { b.vx = 0; b.vy = 0; return true; }
-    const speed = Math.min(GAITS[gait] * Math.sqrt(this.scale), Math.max(30, dist * 3));
+    const k = this.speedScale ?? 1;
+    const speed = Math.min(GAITS[gait] * Math.sqrt(this.scale) * k, Math.max(30, dist * 3) * k);
     b.vx = (dx / dist) * speed;
     b.vy = (dy / dist) * speed;
     // Facing left or right: keep the old facing while heading mostly up or down.
@@ -340,7 +341,7 @@ export const mapSpace = {
     const before = { x: o.x, y: o.y };
     if (dir) {
       const resisting = w.tension > 0.8 && ['flop', 'sniff'].includes(this.activity.phase) && (this.body.x - o.x) * dir.x + (this.body.y - o.y) * dir.y < 0;
-      const step = OWNER_WALK_SPEED * (o.jog ? JOG : 1) * (resisting ? 0.45 : 1) * dt;
+      const step = OWNER_WALK_SPEED * (this.speedScale ?? 1) * (o.jog ? JOG : 1) * (resisting ? 0.45 : 1) * dt;
       // The route follows streets and paths, so walking it needs no checks for walls.
       if (onRoute) { o.x += dir.x * step; o.y += dir.y * step; } else slide(this, o, dir.x * step, dir.y * step, OWNER_RADIUS);
       o.heading = turnToward(o.heading, Math.atan2(dir.y, dir.x), 1 - Math.exp(-dt * 10));
