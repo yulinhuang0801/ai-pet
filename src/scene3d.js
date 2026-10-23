@@ -984,6 +984,10 @@ export class Scene3D {
     const cam = this.sun.shadow.camera;
     if (kind === 'map') Object.assign(cam, { left: -18, right: 18, top: 18, bottom: -18, near: 1, far: 140 });
     else Object.assign(cam, { left: -6, right: 6, top: 4, bottom: -2, near: 1, far: 20 });
+    // A finer shadow map outdoors, where the shadows cover a street.
+    this.sun.shadow.mapSize.set(kind === 'map' ? 2048 : 1024, kind === 'map' ? 2048 : 1024);
+    this.sun.shadow.map?.dispose();
+    this.sun.shadow.map = null;
     cam.updateProjectionMatrix();
   }
 
@@ -1010,7 +1014,7 @@ export class Scene3D {
     cam.x += (tx - cam.x) * k;
     cam.z += (tz - cam.z) * k;
     this.mapLayer.group.visible = true;
-    this.mapLayer.sync(world.walk.blocks, tx, tz);
+    this.mapLayer.sync(world.walk.blocks, tx, tz, world.walk.area?.landmarks ?? world.walk.route?.landmarks ?? []);
 
     const pitch = 1.0;
     this.camera.fov = 45;

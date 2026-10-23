@@ -7,7 +7,9 @@
 // Metres in this file: x east, z south (map y), y up.
 
 import * as THREE from '../vendor/three/three.module.min.js';
-import { CHUNK, B } from './blocks.js';
+import { CHUNK, B, nearestOpen } from './blocks.js';
+import { buildLandmark } from './props3d.js';
+import { landmarkName } from './route-art.js';
 
 const rgb = (r, g, b) => [r / 255, g / 255, b / 255];
 
@@ -78,6 +80,31 @@ class Mesher {
 }
 
 // One chunk as a single mesh.
+const GLASS = rgb(86, 112, 138);
+const GLASS_LIT = rgb(244, 208, 128);
+
+// Windows on one square of an outside wall, one every second square, one per floor.
+function windows(m, i, j, height, side, wall) {
+  const along = side === 'south' || side === 'north' ? i : j;
+  if (along % 2) return;
+  const frame = shade(wall, 0.7);
+  for (let y = 1.0, floor = 0; y + 1.3 < height; y += 3.2, floor++) {
+    const lit = hash(i * 31 + j * 17 + floor * 5) > 0.82;
+    const glass = lit ? GLASS_LIT : GLASS;
+    const e = 0.02;
+    const [a, b] = [0.2, 0.8];
+    if (side === 'south') { m.quad([i + a, y, j + 1 + e], [i + b, y, j + 1 + e], [i + b, y + 1.3, j + 1 + e], [i + a, y + 1.3, j + 1 + e], [0, 0, 1], glass); }
+    else if (side === 'north') { m.quad([i + b, y, j - e], [i + a, y, j - e], [i + a, y + 1.3, j - e], [i + b, y + 1.3, j - e], [0, 0, -1], glass); }
+    else if (side === 'east') { m.quad([i + 1 + e, y, j + b], [i + 1 + e, y, j + a], [i + 1 + e, y + 1.3, j + a], [i + 1 + e, y + 1.3, j + b], [1, 0, 0], glass); }
+    else { m.quad([i - e, y, j + a], [i - e, y, j + b], [i - e, y + 1.3, j + b], [i - e, y + 1.3, j + a], [-1, 0, 0], glass); }
+    // A sill under each window.
+    if (side === 'south') m.box(i + 0.15, y - 0.08, j + 1, i + 0.85, y, j + 1.06, frame);
+    else if (side === 'north') m.box(i + 0.15, y - 0.08, j - 0.06, i + 0.85, y, j, frame);
+    else if (side === 'east') m.box(i + 1, y - 0.08, j + 0.15, i + 1.06, y, j + 0.85, frame);
+    else m.box(i - 0.06, y - 0.08, j + 0.15, i, y, j + 0.85, frame);
+  }
+}
+
 // One chunk as two meshes: the ground with its low walls and hedges, and the
 // buildings, which can be cut through to see you behind them.
 function buildChunk(blocks, chunk, buildingMat, groundMat) {
@@ -89,7 +116,10 @@ function buildChunk(blocks, chunk, buildingMat, groundMat) {
     for (let i = x0; i < x0 + CHUNK; i++) {
       const { id, h, house } = cell(blocks, i, j);
       if (id === B.NONE) continue;
-      const jitter = 0.96 + hash(i * 7.3 + j * 13.1) * 0.08;
+      // Slight variation square to square and over larger patches, and a little
+      // shade in the corners next to buildings.
+      let jitter = 0.95 + hash(i * 7.3 + j * 13.1) * 0.06 + (hash(Math.floor(i / 4) * 3.1 + Math.floor(j / 4) * 5.7) - 0.5) * 0.08;
+      if (id !== B.BUILDING && [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([di, dj]) => cell(blocks, i + di, j + dj).id === B.BUILDING)) jitter *= 0.86;
 
       if (id === B.BUILDING) {
         const height = Math.max(BUILDING_MIN, h);
@@ -97,10 +127,20 @@ function buildChunk(blocks, chunk, buildingMat, groundMat) {
         const roof = ROOFS[Math.floor(hash(house) * ROOFS.length)];
         // Walls only where the neighbour isn't the same building.
         const open = (di, dj) => { const n = cell(blocks, i + di, j + dj); return !(n.id === B.BUILDING && n.house === house); };
+        // A floor, so a hole cut through the walls shows a room, not the sky.
+        m.quad([i, 0, j + 1], [i + 1, 0, j + 1], [i + 1, 0, j], [i, 0, j], [0, 1, 0], rgb(96, 88, 80));
+        const sides = { south: open(0, 1), north: open(0, -1), east: open(1, 0), west: open(-1, 0) };
         bm.box(i, 0, j, i + 1, height, j + 1, wall, {
           top: shade(roof, jitter),
-          skip: { south: !open(0, 1), north: !open(0, -1), east: !open(1, 0), west: !open(-1, 0) },
+          skip: { south: !sides.south, north: !sides.north, east: !sides.east, west: !sides.west },
         });
+        // A low parapet round the roof edge, and a window for every second square
+        // on each floor of an outside wall.
+        const trim = shade(wall, 0.8);
+        if (sides.south) { bm.box(i, height, j + 0.9, i + 1, height + 0.3, j + 1, trim); windows(bm, i, j, height, 'south', wall); }
+        if (sides.north) { bm.box(i, height, j, i + 1, height + 0.3, j + 0.1, trim); windows(bm, i, j, height, 'north', wall); }
+        if (sides.east) { bm.box(i + 0.9, height, j, i + 1, height + 0.3, j + 1, trim); windows(bm, i, j, height, 'east', wall); }
+        if (sides.west) { bm.box(i, height, j, i + 0.1, height + 0.3, j + 1, trim); windows(bm, i, j, height, 'west', wall); }
         continue;
       }
 
@@ -166,19 +206,22 @@ export class MapLayer {
     this.chunks = new Map();
     this.blocks = null;
     this.treeCount = -1;
+    this.treeMeshes = [];
+    this.landmarks = new Map();
+    this.coneGeo = new THREE.ConeGeometry(1, 1, 8);
     const trunk = new THREE.CylinderGeometry(0.12, 0.18, 1, 6);
     trunk.translate(0, 0.5, 0);
     this.trunkGeo = trunk;
     this.crownGeo = new THREE.IcosahedronGeometry(1, 1);
     this.trunkMat = new THREE.MeshLambertMaterial({ color: '#6e5038' });
-    this.cut = { uCam: { value: new THREE.Vector3() }, uPlayer: { value: new THREE.Vector3() }, uRadius: { value: 4 } };
+    this.cut = { uCam: { value: new THREE.Vector3() }, uPlayer: { value: new THREE.Vector3() }, uRadius: { value: 3.5 } };
     this.crownMat = seeThrough(new THREE.MeshLambertMaterial({ color: '#ffffff' }), this.cut);
     this.buildingMat = seeThrough(new THREE.MeshLambertMaterial({ vertexColors: true }), this.cut);
     this.groundMat = new THREE.MeshLambertMaterial({ vertexColors: true });
   }
 
   // Build up to `budget` chunks that don't have a mesh yet, nearest to (x, z) first.
-  sync(blocks, x, z, budget = 3) {
+  sync(blocks, x, z, landmarks = [], budget = 3) {
     if (this.blocks !== blocks) this.reset(blocks);
     const todo = blocks.chunks.filter((c) => !this.chunks.has(c));
     todo.sort((a, b) => Math.hypot((a.ci + 0.5) * CHUNK - x, (a.cj + 0.5) * CHUNK - z) - Math.hypot((b.ci + 0.5) * CHUNK - x, (b.cj + 0.5) * CHUNK - z));
@@ -188,6 +231,7 @@ export class MapLayer {
       this.group.add(mesh);
     }
     if (blocks.trees.length !== this.treeCount) this.buildTrees(blocks.trees);
+    if (landmarks.length !== this.landmarks.size) this.addLandmarks(landmarks);
   }
 
   // Where the camera and the player are, for the see-through hole.
@@ -199,35 +243,88 @@ export class MapLayer {
   reset(blocks) {
     for (const mesh of this.chunks.values()) { this.group.remove(mesh); mesh.traverse((o) => o.geometry?.dispose()); }
     this.chunks.clear();
-    if (this.trunks) { this.group.remove(this.trunks, this.crowns); this.trunks.dispose(); this.crowns.dispose(); this.trunks = null; }
+    this.clearTrees();
+    for (const g of this.landmarks.values()) this.group.remove(g);
+    this.landmarks.clear();
     this.blocks = blocks;
     this.treeCount = -1;
   }
 
+  clearTrees() {
+    for (const m of this.treeMeshes) { this.group.remove(m); m.dispose(); }
+    this.treeMeshes = [];
+  }
+
+  // Round trees, and pines in woods and now and then elsewhere. One instanced
+  // mesh each, rebuilt when more trees load.
   buildTrees(trees) {
-    if (this.trunks) { this.group.remove(this.trunks, this.crowns); this.trunks.dispose(); this.crowns.dispose(); }
-    const n = trees.length;
-    this.treeCount = n;
-    this.trunks = new THREE.InstancedMesh(this.trunkGeo, this.trunkMat, Math.max(1, n));
-    this.crowns = new THREE.InstancedMesh(this.crownGeo, this.crownMat, Math.max(1, n));
-    this.trunks.count = this.crowns.count = n;
-    this.trunks.castShadow = this.crowns.castShadow = true;
+    this.clearTrees();
+    this.treeCount = trees.length;
+    const round = [];
+    const pines = [];
+    trees.forEach((t, k) => {
+      const ground = this.blocks.get(Math.floor(t.x), Math.floor(t.y));
+      (ground === B.FOREST || (!t.street && hash(k + 19) < 0.12) ? pines : round).push([t, k]);
+    });
     const mat = new THREE.Matrix4();
     const quat = new THREE.Quaternion();
     const colour = new THREE.Color();
-    trees.forEach((t, k) => {
+    const make = (geo, material, count) => {
+      const m = new THREE.InstancedMesh(geo, material, Math.max(1, count));
+      m.count = count;
+      m.castShadow = true;
+      this.treeMeshes.push(m);
+      return m;
+    };
+    const trunks = make(this.trunkGeo, this.trunkMat, trees.length);
+    const crowns = make(this.crownGeo, this.crownMat, round.length);
+    const cones = make(this.coneGeo, this.crownMat, pines.length);
+    let n = 0;
+    for (const [t, k] of round) {
       const crown = Math.max(1.1, t.r * 0.5);
       const trunkH = 1.6 + hash(k + 3) * 1.2;
       mat.compose(new THREE.Vector3(t.x, 0, t.y), quat, new THREE.Vector3(1, trunkH, 1));
-      this.trunks.setMatrixAt(k, mat);
+      trunks.setMatrixAt(n, mat);
       mat.compose(new THREE.Vector3(t.x, trunkH + crown * 0.55, t.y), quat, new THREE.Vector3(crown, crown * 0.9, crown));
-      this.crowns.setMatrixAt(k, mat);
+      crowns.setMatrixAt(n, mat);
       const l = LEAVES[Math.floor(hash(k + 11) * LEAVES.length)];
-      this.crowns.setColorAt(k, colour.setRGB(l[0], l[1], l[2]));
-    });
-    this.trunks.instanceMatrix.needsUpdate = true;
-    this.crowns.instanceMatrix.needsUpdate = true;
-    if (this.crowns.instanceColor) this.crowns.instanceColor.needsUpdate = true;
-    this.group.add(this.trunks, this.crowns);
+      crowns.setColorAt(n, colour.setRGB(l[0], l[1], l[2]));
+      n++;
+    }
+    let c = 0;
+    for (const [t, k] of pines) {
+      const crown = Math.max(0.9, t.r * 0.38);
+      const h = 4 + hash(k + 5) * 3;
+      mat.compose(new THREE.Vector3(t.x, 0, t.y), quat, new THREE.Vector3(1, 1.2, 1));
+      trunks.setMatrixAt(n, mat);
+      mat.compose(new THREE.Vector3(t.x, 1.0 + h / 2, t.y), quat, new THREE.Vector3(crown, h, crown));
+      cones.setMatrixAt(c, mat);
+      const l = LEAVES[2];
+      cones.setColorAt(c, colour.setRGB(l[0] * 0.8, l[1] * 0.85, l[2] * 0.8));
+      n++;
+      c++;
+    }
+    trunks.count = n;
+    for (const m of [trunks, crowns, cones]) {
+      m.instanceMatrix.needsUpdate = true;
+      if (m.instanceColor) m.instanceColor.needsUpdate = true;
+      this.group.add(m);
+    }
+  }
+
+  // Models for landmarks as they load: put on open ground near where the map says they are.
+  addLandmarks(list) {
+    for (const lm of list) {
+      const key = `${lm.kind}:${lm.x}:${lm.y}`;
+      if (this.landmarks.has(key)) continue;
+      const model = buildLandmark(lm.kind, ['bench', 'drinking_water'].includes(lm.kind) ? null : landmarkName(lm));
+      if (!model) { this.landmarks.set(key, null); continue; }
+      // Cafés and shops are marked inside their building: stand outside it.
+      const open = nearestOpen(this.blocks, lm.x, lm.y, 10) ?? { x: lm.x, y: lm.y };
+      model.position.set(open.x, 0, open.y);
+      model.rotation.y = Math.floor(hash(lm.x * 3 + lm.y) * 4) * (Math.PI / 2);
+      this.landmarks.set(key, model);
+      this.group.add(model);
+    }
   }
 }
